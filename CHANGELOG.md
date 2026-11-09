@@ -4,6 +4,8 @@ User-facing changes, newest first. Every change that reaches `main` adds a line 
 
 ## Unreleased (next: 1.1.0)
 
+- **Rename a drawing from its title.** Clicking (or tapping) the drawing's name in the header now lets you rename the file, as it does for notes.
+- **Menus close when you tap the page.** With a menu open (for example the header's ⋯ menu), a tap or click on the drawing now closes it, instead of the menu staying open until you tap its button again. That tap draws nothing.
 - **A resting palm no longer scrolls the page.** One finger now has to really move (about 10 px) before the page pans, and a touch that lands right as the pen lifts (your wrist, between words) is ignored for as long as it stays down.
 - **Pen mode (optional, Settings → Touch).** Once the pen touches the page, one finger stops moving it; pan and zoom with two fingers. A **Pen mode ×** chip at the top of the drawing turns it off until you next use the pen (like tldraw's "Exit pen mode").
 - **Two-finger scrolling no longer zooms by accident.** A two-finger gesture now first decides whether it's a pan or a zoom (the same rule tldraw uses): moving your fingers together pans with the zoom held still, even if they drift apart a little; spreading or pinching them zooms. A clear pinch during a pan still switches to zooming, without a jump.
