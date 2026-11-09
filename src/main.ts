@@ -5,7 +5,7 @@ import { DEFAULT_SETTINGS, InkSettingTab, InkSettings, destinationFolder, live }
 import { importTldraw } from "./tldraw-import";
 import { compareWithTldraw, nodeRequire } from "./compare";
 import { loadExp, type Exp } from "./exp";
-import { Rect, Store, Stroke, appendRows, dataText, strokeRow } from "./store";
+import { Rect, Store, Stroke, appendRows, dataFor } from "./store";
 import { InkView, VIEW_TYPE } from "./view";
 import { synthStrokes } from "./synth";
 
@@ -262,7 +262,7 @@ export default class InfinitePaperPlugin extends Plugin {
 		const [w, h] = view.engine.viewSize(), z = view.engine.cam.z;
 		const cam = { z, x: w / 2 - ((b.x0 + b.x1) / 2) * z, y: h / 2 - ((b.y0 + b.y1) / 2) * z };
 		const header = links.length ? addBacklinks(DEFAULT_HEADER, links) : DEFAULT_HEADER;
-		return this.app.vault.create(path, joinMarkdown(header, dataText(cam, b, strokes.map((s) => strokeRow(s)))));
+		return this.app.vault.create(path, joinMarkdown(header, dataFor(cam, strokes)));
 	}
 
 	/** add strokes to an existing drawing: into its open view (undoable there) or, if closed, by appending rows to the file */
@@ -308,12 +308,16 @@ export default class InfinitePaperPlugin extends Plugin {
 				if (!line.includes('"link":')) return line;
 				const comma = line.endsWith(",");
 				try {
-					const row = JSON.parse(comma ? line.slice(0, -1) : line) as unknown[];
-					const x = row[3] as { link?: string; label?: string } | undefined;
-					if (!x || !x.link || !olds.has(x.link)) return line;
-					x.link = target;
-					if (x.label && oldLabels.has(x.label)) x.label = f.basename;
-					return JSON.stringify(row) + (comma ? "," : "");
+					// version 2: a chunk line {"s":..,"l":[links],"d":..}; version 1: a stroke row [color, size, points, link]
+					const row = JSON.parse(comma ? line.slice(0, -1) : line) as unknown[] | { l?: { link?: string; label?: string }[] };
+					const xs = Array.isArray(row) ? [row[3] as { link?: string; label?: string } | undefined] : row.l ?? [];
+					let changed = false;
+					for (const x of xs) {
+						if (!x || !x.link || !olds.has(x.link)) continue;
+						x.link = target; changed = true;
+						if (x.label && oldLabels.has(x.label)) x.label = f.basename;
+					}
+					return changed ? JSON.stringify(row) + (comma ? "," : "") : line;
 				} catch { return line; }
 			}).join("\n"));
 		}

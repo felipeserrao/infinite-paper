@@ -1,5 +1,6 @@
 import { getStroke, getStrokePoints } from "perfect-freehand";
 import { exp } from "./exp";
+import { deflateSync, inflateSync } from "fflate";
 
 export interface Rect { x0: number; y0: number; x1: number; y1: number; }
 
@@ -14,8 +15,10 @@ export interface Stroke {
 	path?: Path2D;
 	/** cached centerline (exp.centerline), built lazily */
 	cpath?: Path2D;
-	/** cached encoded form for saving */
-	enc?: string;
+	/** cached encoded points for saving (varints, see encodePointBytes) */
+	enc?: Uint8Array;
+	/** which saved chunk this stroke belongs to (assigned on first save) */
+	chunk?: number;
 	/** query dedupe stamp */
 	stamp: number;
 	/** a link box instead of ink: pts = two opposite corners, size = border width */
@@ -234,7 +237,7 @@ export function rectsOverlap(a: Rect, b: Rect) {
 	return a.x0 < b.x1 && a.x1 > b.x0 && a.y0 < b.y1 && a.y1 > b.y0;
 }
 
-// ---------- encoding: quantized (1/4 px), delta, zigzag varint, base64 ----------
+// ---------- encoding: quantized (1/4 px), delta, zigzag varint ----------
 const Q = 4;
 
 function writeVar(out: number[], v: number) {
@@ -243,7 +246,23 @@ function writeVar(out: number[], v: number) {
 	out.push(z);
 }
 
-export function encodePoints(pts: Float32Array): string {
+/** unsigned varint */
+function writeU(out: number[], z: number) {
+	while (z >= 0x80) { out.push((z & 0x7f) | 0x80); z = Math.floor(z / 128); }
+	out.push(z);
+}
+
+function readU(b: Uint8Array, at: { i: number }): number {
+	let z = 0, mul = 1;
+	for (;;) {
+		const c = b[at.i++];
+		z += (c & 0x7f) * mul;
+		if (!(c & 0x80)) return z;
+		mul *= 128;
+	}
+}
+
+export function encodePointBytes(pts: Float32Array): Uint8Array {
 	const out: number[] = [];
 	let px = 0, py = 0;
 	for (let i = 0; i < pts.length; i += 2) {
@@ -251,17 +270,14 @@ export function encodePoints(pts: Float32Array): string {
 		writeVar(out, qx - px); writeVar(out, qy - py);
 		px = qx; py = qy;
 	}
-	let bin = "";
-	for (let i = 0; i < out.length; i += 4096) bin += String.fromCharCode.apply(null, out.slice(i, i + 4096));
-	return btoa(bin);
+	return Uint8Array.from(out);
 }
 
-export function decodePoints(b64: string): Float32Array {
-	const bin = atob(b64);
+export function decodePointBytes(bin: Uint8Array, start = 0, end = bin.length): Float32Array {
 	const vals: number[] = [];
 	let z = 0, mul = 1;
-	for (let i = 0; i < bin.length; i++) {
-		const c = bin.charCodeAt(i);
+	for (let i = start; i < end; i++) {
+		const c = bin[i];
 		z += (c & 0x7f) * mul;
 		if (c & 0x80) { mul *= 128; continue; }
 		vals.push(z % 2 === 0 ? z / 2 : -(z + 1) / 2);
@@ -276,6 +292,88 @@ export function decodePoints(b64: string): Float32Array {
 	return pts;
 }
 
+function toB64(b: Uint8Array): string {
+	let bin = "";
+	for (let i = 0; i < b.length; i += 8192) bin += String.fromCharCode.apply(null, Array.from(b.subarray(i, i + 8192)));
+	return btoa(bin);
+}
+
+function fromB64(s: string): Uint8Array {
+	const bin = atob(s);
+	const b = new Uint8Array(bin.length);
+	for (let i = 0; i < bin.length; i++) b[i] = bin.charCodeAt(i);
+	return b;
+}
+
+/** version 1 rows: the points of one stroke as base64 */
+export function decodePoints(b64: string): Float32Array { return decodePointBytes(fromB64(b64)); }
+
+// ---------- chunks (version 2) ----------
+/**
+ * Strokes are saved in chunks of up to CHUNK strokes. A chunk is one line:
+ *   {"s":[[color,size],...],"l":[{"link":..,"label":..,"frame":1}],"d":"<base64 of deflated binary>"}
+ * binary, per stroke: varint style index, varint link (0 = ink, k = l[k-1]), varint byte length, point varints.
+ * A chunk only depends on its own strokes, so a save re-compresses only the chunks that changed.
+ */
+export const CHUNK = 2000;
+
+type LinkRow = { link: string; label: string; frame?: number };
+interface ChunkLine { s: [string, number][]; l?: LinkRow[]; d: string }
+
+function linkRow(l: LinkInfo): LinkRow { return l.frame ? { link: l.target, label: l.label, frame: 1 } : { link: l.target, label: l.label }; }
+
+export function encodeChunk(strokes: Stroke[]): string {
+	const styles: [string, number][] = [], styleIx = new Map<string, number>(), links: LinkRow[] = [];
+	const out: number[] = [];
+	const parts: Uint8Array[] = [];
+	for (const s of strokes) {
+		const key = s.color + "|" + s.size;
+		let si = styleIx.get(key);
+		if (si === undefined) { si = styles.length; styles.push([s.color, s.size]); styleIx.set(key, si); }
+		if (!s.enc) s.enc = encodePointBytes(s.pts);
+		writeU(out, si);
+		if (s.link) { links.push(linkRow(s.link)); writeU(out, links.length); } else writeU(out, 0);
+		writeU(out, s.enc.length);
+		parts.push(Uint8Array.from(out)); out.length = 0;
+		parts.push(s.enc);
+	}
+	let n = 0; for (const p of parts) n += p.length;
+	const bin = new Uint8Array(n); n = 0;
+	for (const p of parts) { bin.set(p, n); n += p.length; }
+	const line: ChunkLine = { s: styles, d: "" };
+	if (links.length) line.l = links;
+	const head = JSON.stringify(line);
+	return head.slice(0, -3) + JSON.stringify(toB64(deflateSync(bin, { level: 9 }))) + "}";
+}
+
+export function decodeChunk(line: ChunkLine, add: (color: string, size: number, pts: Float32Array, enc: Uint8Array, link?: LinkInfo) => void) {
+	const bin = inflateSync(fromB64(line.d));
+	const at = { i: 0 };
+	while (at.i < bin.length) {
+		const [color, size] = line.s[readU(bin, at)];
+		const li = readU(bin, at);
+		const len = readU(bin, at);
+		const enc = bin.slice(at.i, at.i + len); at.i += len;
+		const x = li ? line.l?.[li - 1] : undefined;
+		const link: LinkInfo | undefined = x?.link ? { target: x.link, label: x.label ?? x.link } : undefined;
+		if (link && x?.frame) link.frame = true;
+		add(color, size, decodePointBytes(enc), enc, link);
+	}
+}
+
+/** what a chunk's saved text depends on, compared by reference */
+function chunkSig(strokes: Stroke[]): unknown[] {
+	const sig: unknown[] = [];
+	for (const s of strokes) sig.push(s, s.enc, s.color, s.size, s.link, s.link?.target, s.link?.label);
+	return sig;
+}
+
+function sameSig(a: unknown[], b: unknown[]) {
+	if (a.length !== b.length) return false;
+	for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+	return true;
+}
+
 // ---------- spatial grid ----------
 const CELL = 256;
 
@@ -284,6 +382,8 @@ export class Store {
 	private cells = new Map<string, Set<number>>();
 	private nextId = 1;
 	private stampCounter = 1;
+	/** saved text of each chunk, reused while its strokes are unchanged */
+	private chunkCache = new Map<number, { sig: unknown[]; text: string }>();
 
 	create(color: string, size: number, pts: Float32Array, link?: LinkInfo): Stroke {
 		const s: Stroke = { id: this.nextId++, color, size, pts, bbox: computeBBox(pts, size), stamp: 0 };
@@ -355,50 +455,86 @@ export class Store {
 		}
 	}
 
-	clear() { this.strokes.clear(); this.cells.clear(); }
+	clear() { this.strokes.clear(); this.cells.clear(); this.chunkCache.clear(); }
 
 	// ---------- file ----------
 	serialize(camera: { x: number; y: number; z: number }): string {
-		const rows: string[] = [];
 		// in creation (paint) order: moving or restyling re-adds strokes, which puts them last in the Map
 		const all = [...this.strokes.values()].sort((a, b) => a.id - b.id);
+		const groups = new Map<number, Stroke[]>();
+		let open = -1;
+		for (const s of all) if (s.chunk !== undefined && s.chunk > open) open = s.chunk;
 		for (const s of all) {
-			if (!s.enc) s.enc = encodePoints(s.pts);
-			rows.push(rowJSON(s.color, s.size, s.enc, s.link));
+			if (s.chunk === undefined) {
+				// new strokes go to the last chunk until it is full
+				if (open < 0 || (groups.get(open)?.length ?? 0) >= CHUNK) open++;
+				s.chunk = open;
+			}
+			let g = groups.get(s.chunk);
+			if (!g) { g = []; groups.set(s.chunk, g); }
+			g.push(s);
 		}
-		return dataText(camera, unionBBox(all), rows);
+		const lines: string[] = [];
+		const keep = new Map<number, { sig: unknown[]; text: string }>();
+		for (const k of [...groups.keys()].sort((a, b) => a - b)) {
+			const g = groups.get(k)!;
+			for (const s of g) if (!s.enc) s.enc = encodePointBytes(s.pts);
+			const sig = chunkSig(g);
+			let c = this.chunkCache.get(k);
+			if (!c || !sameSig(c.sig, sig)) c = { sig, text: encodeChunk(g) };
+			keep.set(k, c);
+			lines.push(c.text);
+		}
+		this.chunkCache = keep;
+		return dataText(camera, unionBBox(all), lines);
 	}
 
 	load(text: string): { x: number; y: number; z: number } | null {
 		this.clear();
 		if (!text.trim()) return null;
-		const data = JSON.parse(text) as { strokes: unknown[]; camera?: { x: number; y: number; z: number } };
-		for (const [color, size, enc, extra] of data.strokes as [string, number, string, { link?: string; label?: string; frame?: number }?][]) {
+		const data = JSON.parse(text) as { strokes?: unknown[]; chunks?: ChunkLine[]; camera?: { x: number; y: number; z: number } };
+		if ((data as { version?: number }).version !== undefined && (data as { version: number }).version > 2) throw new Error("this note was saved by a newer version of Infinite Paper; update the plugin to open it");
+		if (!data.chunks && !Array.isArray(data.strokes)) throw new Error("no drawing data found");
+		if (data.chunks) {
+			data.chunks.forEach((line, k) => {
+				const g: Stroke[] = [];
+				decodeChunk(line, (color, size, pts, enc, link) => {
+					const s = this.create(color, size, pts, link);
+					s.enc = enc; s.chunk = k;
+					this.add(s); g.push(s);
+				});
+				// the file already holds this chunk's text (re-encoded identically on a change only)
+				this.chunkCache.set(k, { sig: chunkSig(g), text: JSON.stringify(line) });
+			});
+			return data.camera ?? null;
+		}
+		// version 1: one stroke per row [color, size, base64 points, link?]
+		for (const [color, size, enc, extra] of (data.strokes ?? []) as [string, number, string, { link?: string; label?: string; frame?: number }?][]) {
 			const pts = decodePoints(enc);
 			const link: LinkInfo | undefined = extra?.link ? { target: extra.link, label: extra.label ?? extra.link } : undefined;
 			if (link && extra?.frame) link.frame = true;
-			const s = this.create(color, size, pts, link);
-			s.enc = enc;
-			this.add(s);
+			this.add(this.create(color, size, pts, link));
 		}
 		return data.camera ?? null;
 	}
 }
 
-function rowJSON(color: string, size: number, enc: string, link?: LinkInfo) {
-	if (!link) return JSON.stringify([color, size, enc]);
-	return JSON.stringify([color, size, enc, link.frame ? { link: link.target, label: link.label, frame: 1 } : { link: link.target, label: link.label }]);
-}
-
-/** one stroke as a saved row, shifted by (dx, dy) */
-export function strokeRow(s: Stroke, dx = 0, dy = 0): string {
-	let enc = s.enc;
-	if (!enc || dx || dy) {
+/** strokes shifted by (dx, dy), as new strokes (not in any store) */
+function shifted(strokes: Stroke[], dx: number, dy: number): Stroke[] {
+	return strokes.map((s) => {
 		const p = new Float32Array(s.pts.length);
 		for (let i = 0; i < p.length; i += 2) { p[i] = s.pts[i] + dx; p[i + 1] = s.pts[i + 1] + dy; }
-		enc = encodePoints(p);
-	}
-	return rowJSON(s.color, s.size, enc, s.link);
+		const n: Stroke = { id: 0, color: s.color, size: s.size, pts: p, bbox: computeBBox(p, s.size), stamp: 0 };
+		if (s.link) n.link = s.link;
+		return n;
+	});
+}
+
+/** a whole data block holding these strokes */
+export function dataFor(camera: { x: number; y: number; z: number }, strokes: Stroke[]): string {
+	const lines: string[] = [];
+	for (let i = 0; i < strokes.length; i += CHUNK) lines.push(encodeChunk(shifted(strokes.slice(i, i + CHUNK), 0, 0)));
+	return dataText(camera, unionBBox(strokes), lines);
 }
 
 export function unionBBox(strokes: Iterable<Stroke>): Rect | null {
@@ -412,35 +548,43 @@ export function unionBBox(strokes: Iterable<Stroke>): Rect | null {
 }
 
 /**
- * The data block. One stroke per line (renames and appends work line by line). `bounds` (content extent, since v0.8.1)
+ * The data block (version 2): one chunk per line (renames work line by line). `bounds` (content extent)
  * lets ink be added to a closed drawing without decoding its strokes.
  */
-export function dataText(camera: { x: number; y: number; z: number }, bounds: Rect | null, rows: string[]): string {
+export function dataText(camera: { x: number; y: number; z: number }, bounds: Rect | null, lines: string[]): string {
 	const b = bounds ? `,"bounds":${JSON.stringify({ x0: Math.round(bounds.x0), y0: Math.round(bounds.y0), x1: Math.round(bounds.x1), y1: Math.round(bounds.y1) })}` : "";
-	return `{"type":"infinite-paper","version":1,"camera":${JSON.stringify(camera)}${b},"strokes":[\n${rows.join(",\n")}\n]}\n`;
+	return `{"type":"infinite-paper","version":2,"camera":${JSON.stringify(camera)}${b},"chunks":[\n${lines.join(",\n")}\n]}\n`;
 }
 
 /**
- * Add rows to a saved data block, as text: existing rows are kept verbatim and never decoded, unless the
- * block has no `bounds` (saved before v0.8.1), in which case it is loaded once to measure it.
- * `place` gets the target's content bounds and returns the offset for the new rows' strokes.
+ * Add strokes to a saved data block as new chunks: existing chunks are kept verbatim and never decoded.
+ * A version 1 block (or one without `bounds`) is loaded once and rewritten as version 2.
+ * `place` gets the target's content bounds and returns the offset for the new strokes.
  */
 export function appendRows(data: string, strokes: Stroke[], place: (target: Rect | null) => [number, number]): string {
-	const k = data.indexOf('"strokes":[');
+	const k = data.indexOf('"chunks":[');
 	let camera = { x: 0, y: 0, z: 1 }, bounds: Rect | null = null, body = "";
 	if (k >= 0) {
 		const meta = JSON.parse(data.slice(0, k) + '"_":0}') as { camera?: { x: number; y: number; z: number }; bounds?: Rect };
 		camera = meta.camera ?? camera;
-		body = data.slice(k + '"strokes":['.length, data.lastIndexOf("]")).replace(/^\s+|\s+$/g, "");
-		if (meta.bounds) bounds = meta.bounds;
-		else if (body) { const st = new Store(); st.load(data); bounds = unionBBox(st.strokes.values()); }
+		body = data.slice(k + '"chunks":['.length, data.lastIndexOf("]")).replace(/^\s+|\s+$/g, "");
+		bounds = meta.bounds ?? null;
+	}
+	if (data.trim() && (k < 0 || (body && !bounds))) {
+		// version 1, or no bounds: load, add, save whole
+		const st = new Store();
+		const cam = st.load(data) ?? camera;
+		const [dx, dy] = place(unionBBox(st.strokes.values()));
+		for (const s of shifted(strokes, dx, dy)) st.add(st.create(s.color, s.size, s.pts, s.link));
+		return st.serialize(cam);
 	}
 	const [dx, dy] = place(bounds);
-	const rows = strokes.map((s) => strokeRow(s, dx, dy));
-	const moved = unionBBox(strokes)!;
-	const nb = { x0: moved.x0 + dx, y0: moved.y0 + dy, x1: moved.x1 + dx, y1: moved.y1 + dy };
+	const moved = shifted(strokes, dx, dy);
+	const lines: string[] = [];
+	for (let i = 0; i < moved.length; i += CHUNK) lines.push(encodeChunk(moved.slice(i, i + CHUNK)));
+	const nb = unionBBox(moved)!;
 	const all = bounds ? { x0: Math.min(bounds.x0, nb.x0), y0: Math.min(bounds.y0, nb.y0), x1: Math.max(bounds.x1, nb.x1), y1: Math.max(bounds.y1, nb.y1) } : nb;
-	return dataText(camera, all, body ? [body, ...rows] : rows);
+	return dataText(camera, all, body ? [body, ...lines] : lines);
 }
 
 export function distToSegSq(px: number, py: number, ax: number, ay: number, bx: number, by: number) {

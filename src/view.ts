@@ -34,8 +34,12 @@ export class InkView extends TextFileView {
 
 	private setDirty(d: boolean) { this.saveAction?.toggleClass("ink-unsaved", d); }
 
+	/** the file's text when it couldn't be read: the view is then read-only and never writes the file */
+	private unreadable: string | null = null;
+
 	async save(clear?: boolean) {
 		if (this.tldraw) return; // a tldraw note is shown read-only: never written
+		if (this.unreadable !== null) return; // never overwrite a note we couldn't read
 		await super.save(clear);
 		this.setDirty(false);
 	}
@@ -53,7 +57,7 @@ export class InkView extends TextFileView {
 		this.stage = this.contentEl.createDiv({ cls: "ink-stage" });
 		this.engine = new InkEngine(this.stage);
 		this.stage.addEventListener("pointerdown", () => { this.closeMenus(); if (this.linksPopOpen) this.toggleLinksPop(false); }, { capture: true });
-		this.engine.onChange = () => { if (!this.loading && !this.tldraw) { this.setDirty(true); this.requestSave(); } };
+		this.engine.onChange = () => { if (!this.loading && !this.tldraw && this.unreadable === null) { this.setDirty(true); this.requestSave(); } };
 		this.engine.onEdit = () => {
 			if (this.loading || !this.tldraw || this.discarding) return;
 			// read-only: a stray tap leaves no mark and makes no copy; real writing, erasing or moving does
@@ -109,6 +113,7 @@ export class InkView extends TextFileView {
 
 	getViewData(): string {
 		if (this.tldraw) return this.tldraw.raw;
+		if (this.unreadable !== null) return this.unreadable;
 		const data = this.engine.serialize();
 		return this.isMarkdown() ? joinMarkdown(this.mdHeader, data) : data;
 	}
@@ -116,6 +121,7 @@ export class InkView extends TextFileView {
 	setViewData(data: string, clear: boolean): void {
 		this.loading = true;
 		this.tldraw = null;
+		this.unreadable = null;
 		try {
 			if (this.isMarkdown() && isTldrawMarkdown(data)) {
 				const r = importTldraw(data);
@@ -127,7 +133,9 @@ export class InkView extends TextFileView {
 				this.engine.load(json);
 			} else this.engine.load(data);
 		} catch (e) {
-			new Notice(`Can't show this note: ${(e as Error)?.message ?? e}`, 0);
+			this.unreadable = data;
+			this.engine.clearAll();
+			new Notice(`Can't show this note: ${(e as Error)?.message ?? e}\nIt is left unchanged; nothing you draw here is saved.`, 0);
 		} finally { this.loading = false; this.renderBanner(); this.renderLinks(); }
 	}
 
