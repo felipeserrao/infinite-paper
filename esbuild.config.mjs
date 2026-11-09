@@ -11,6 +11,8 @@ const ctx = await esbuild.context({
   sourcemap: prod ? false : "inline",
   treeShaking: true,
   outfile: "main.js",
+  // test builds (scripts/deploy-dev.mjs) carry their name, date and parts; release builds carry ""
+  define: { INFINITE_PAPER_BUILD: JSON.stringify(process.env.INFINITE_PAPER_BUILD ?? "") },
   // If the module itself throws while loading, fall back to a stub plugin that reports the error.
   banner: { js: "try {" },
   footer: { js: `} catch (e) {

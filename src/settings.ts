@@ -3,6 +3,10 @@ import type InfinitePaperPlugin from "./main";
 
 // Not in the public typings, but long-standing and widely used: the "Files and links" attachment setting.
 declare module "obsidian" { interface Vault { getConfig?(key: string): unknown } }
+/** set at build time: JSON details of a test build, "" for a release build */
+declare const INFINITE_PAPER_BUILD: string;
+
+interface TestBuild { n: number; date: string; parts: { goal: string; who: string }[]; branch: string; commit: string; dirty: boolean }
 
 /** where new drawings (and drawings converted from tldraw) are created — same choices as the tldraw plugin */
 export type DestinationMethod = "default-folder" | "colocate" | "attachments-folder";
@@ -145,7 +149,19 @@ export class InkSettingTab extends PluginSettingTab {
 			.setName("Developer mode")
 			.setDesc("Shows the smoothness tests and performance overlay in the toolbar's More menu, plus the Dev commands (compare with tldraw, synthetic stroke stress tests).")
 			.addToggle((t) => t.setValue(s.devMode).onChange(async (v) => { s.devMode = v; await save(); }));
+
+		const build = testBuild();
+		if (build) {
+			const parts = build.parts.map((p) => p.goal + (p.who ? ` (${p.who})` : "")).join(", ");
+			new Setting(el)
+				.setName(`Test build ${build.n}`)
+				.setDesc(`${build.date} · ${parts} · ${build.branch}@${build.commit}${build.dirty ? " + uncommitted changes" : ""}`);
+		}
 	}
+}
+
+function testBuild(): TestBuild | null {
+	try { return INFINITE_PAPER_BUILD ? JSON.parse(INFINITE_PAPER_BUILD) as TestBuild : null; } catch { return null; }
 }
 
 /** folder (no trailing slash, "" = root) that a new drawing should go in */
