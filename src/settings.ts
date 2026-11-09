@@ -31,6 +31,8 @@ export interface InkSettings {
 	linkLineTemplate: string;
 	/** save new strokes as their smoothed, simplified line: much smaller files, ink within about 1 px */
 	compactInk: boolean;
+	/** once the pen touches the page, one finger stops moving it (tldraw's pen mode); two fingers still pan and zoom */
+	penMode: boolean;
 }
 
 export const DEFAULT_SETTINGS: InkSettings = {
@@ -45,6 +47,7 @@ export const DEFAULT_SETTINGS: InkSettings = {
 	devMode: false,
 	linkLineTemplate: "- {{link}}",
 	compactInk: false,
+	penMode: false,
 };
 
 /** the plugin's current settings, for code (like the view) that has no handle on the plugin */
@@ -146,6 +149,12 @@ export class InkSettingTab extends PluginSettingTab {
 				const n = Number(v);
 				if (n >= 5 && n <= 800) { s.preferredZoom = n; await save(); }
 			}));
+
+		new Setting(el).setName("Touch").setHeading();
+		new Setting(el)
+			.setName("Pen mode")
+			.setDesc("Once the pen touches the page, one finger stops moving it, so a resting palm can't scroll the page. Pan and zoom with two fingers. Tap \"Pen mode ×\" at the top of the drawing to pan with one finger again, until you next use the pen. Off: one finger pans, but only after it really moves, and not right after the pen lifts.")
+			.addToggle((t) => t.setValue(s.penMode).onChange(async (v) => { s.penMode = v; await save(); }));
 
 		new Setting(el).setName("File size").setHeading();
 		new Setting(el)

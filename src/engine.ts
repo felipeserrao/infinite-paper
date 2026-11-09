@@ -18,6 +18,8 @@ const MIN_ZOOM = 0.03, MAX_ZOOM = 6;
 const ZOOM_IDLE_MS = 140;
 /** two-finger gesture thresholds, in screen px (tldraw's): spread to start zooming, midpoint travel to start panning, spread to turn a pan into a zoom */
 const PINCH_ZOOM_PX = 24, PINCH_PAN_PX = 16, PAN_TO_ZOOM_PX = 64;
+/** palm guards for finger panning: a one-finger pan starts after this many screen px; touches this soon after the pen are ignored; contacts wider than this (px) are a palm */
+const PAN_START_PX = 10, PALM_COOLDOWN_MS = 500, PALM_CONTACT_PX = 44;
 const FRAME_BUDGET_MS = 7;
 
 class Ring {
@@ -38,6 +40,11 @@ export class InkEngine {
 	color = "#1e1e1e";
 	size = 4.5;
 	touchDraws = false;
+	/** setting "Pen mode": once the pen touches the page, one finger stops moving it (two fingers still pan and zoom) */
+	penOnly: () => boolean = () => false;
+	/** pen mode is on right now (entered by the pen, left with exitPenMode) */
+	penMode = false;
+	onPenModeChange: (on: boolean) => void = () => {};
 
 	onChange: () => void = () => {};
 	/** ink was added, removed or moved (not camera moves) */
@@ -611,6 +618,11 @@ export class InkEngine {
 		}
 		if (isTouch) {
 			if (this.drawPointer !== null && this.drawPointerType !== "touch") return; // palm guard
+			if (!this.touchDraws) {
+				// a palm landing as the pen lifts between words, or a contact wider than a fingertip, never moves the page
+				if (performance.now() - this.lastPenAt < PALM_COOLDOWN_MS) return;
+				if (Math.max(e.width || 0, e.height || 0) > PALM_CONTACT_PX) return;
+			}
 			this.tap = this.touches.size === 0 ? { id: e.pointerId, x, y, t: performance.now() } : null;
 			this.touches.set(e.pointerId, { x, y });
 			this.capture(e.pointerId);
@@ -632,6 +644,7 @@ export class InkEngine {
 		if (e.pointerType === "mouse" && e.button !== 0) return;
 		// pen (or mouse left): cancel any finger gesture
 		this.touches.clear(); this.gesture = null;
+		if (e.pointerType === "pen" && !this.penMode && !this.touchDraws && this.penOnly()) { this.penMode = true; this.onPenModeChange(true); }
 		if (this.drawPointer !== null) return;
 		this.capture(e.pointerId);
 		this.startDraw(e, x, y);
@@ -640,13 +653,15 @@ export class InkEngine {
 	private startGesture() {
 		const pts = [...this.touches.values()];
 		if (pts.length === 0) { this.gesture = null; this.perf.interacting = false; return; }
+		// pen mode: one finger does nothing (a tap still opens a link box); two fingers pan and zoom
+		if (pts.length < 2 && this.inPenMode() && !this.panMode) { this.gesture = null; this.perf.interacting = false; return; }
 		this.perf.interacting = true;
 		const sx = pts.reduce((a, p) => a + p.x, 0) / pts.length;
 		const sy = pts.reduce((a, p) => a + p.y, 0) / pts.length;
 		const d = pts.length >= 2 ? Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) : 0;
 		const [wx, wy] = this.toWorld(sx, sy);
 		const kind = pts.length >= 2 ? "pinch" : "pan";
-		this.gesture = { kind, mode: kind === "pan" ? "pan" : "unsure", sx, sy, d, cam: { ...this.cam }, wx, wy };
+		this.gesture = { kind, mode: "unsure", sx, sy, d, cam: { ...this.cam }, wx, wy };
 	}
 
 	private onMove(e: PointerEvent) {
@@ -683,6 +698,11 @@ export class InkEngine {
 		const pts = [...this.touches.values()];
 		const sx = pts.reduce((a, p) => a + p.x, 0) / pts.length;
 		const sy = pts.reduce((a, p) => a + p.y, 0) / pts.length;
+		// one finger: pan only once it has really moved, so a resting palm or fingertip doesn't nudge the page
+		if (g.kind === "pan" && g.mode === "unsure") {
+			if (Math.hypot(sx - g.sx, sy - g.sy) <= PAN_START_PX) return;
+			g.mode = "pan";
+		}
 		let z = g.cam.z;
 		if (g.kind === "pinch" && pts.length >= 2 && g.d > 0) {
 			const d = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
@@ -726,6 +746,11 @@ export class InkEngine {
 		if (cancelled) this.cancelDraw();
 		else this.endDraw();
 	}
+
+	private inPenMode() { return this.penMode && !this.touchDraws && this.penOnly(); }
+
+	/** leave pen mode: one finger pans again, until the pen next touches the page */
+	exitPenMode() { if (!this.penMode) return; this.penMode = false; this.onPenModeChange(false); }
 
 	private onWheel(e: WheelEvent) {
 		e.preventDefault();
