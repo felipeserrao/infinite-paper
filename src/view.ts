@@ -692,6 +692,7 @@ export class InkView extends TextFileView {
 		if (box) {
 			btn("external-link", "Open", `Open ${box.link!.label}`, () => this.engine.onLinkOpen(box.link!.target));
 			btn("pencil", "Change", "Point this box at another note", () => { void this.changeSelectedLink(); });
+			btn("unlink", "Unlink", "Remove the link and keep the ink", () => this.engine.unlinkSelection());
 		} else if (this.engine.selection.length) {
 			const p = this.plugin();
 			btn("link", "Link", "Link the selection to a note", () => { void this.insertLink(); });
@@ -705,7 +706,7 @@ export class InkView extends TextFileView {
 			btn("folder-input", "Move…", "Move the selection to another drawing", transfer("move"));
 			btn("copy", "Copy…", "Copy the selection to another drawing", transfer("copy"));
 		}
-		btn("trash-2", null, "Delete selection", () => this.deleteSelection());
+		btn("trash-2", null, box ? "Delete the box and the ink inside it" : "Delete selection", () => this.deleteSelection());
 		this.updateOverlays();
 	}
 

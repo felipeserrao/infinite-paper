@@ -1132,6 +1132,16 @@ export class InkEngine {
 		this.push({ type: "remove", strokes });
 	}
 
+	/** remove the selected link box but keep the ink inside it, still selected */
+	unlinkSelection() {
+		const box = this.selectedLinkBox();
+		if (!box) return;
+		const inner = this.selection.filter((s) => s !== box);
+		this.removeStrokes([box]);
+		this.push({ type: "remove", strokes: [box] });
+		this.setSelection(inner);
+	}
+
 	deleteSelection() {
 		if (!this.selection.length) return;
 		const sel = this.selection;
