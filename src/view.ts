@@ -63,7 +63,7 @@ export class InkView extends TextFileView {
 				window.setTimeout(() => { try { this.engine.undo(); } finally { this.discarding = false; } }, 0);
 				return;
 			}
-			this.copyOnEdit();
+			void this.copyOnEdit();
 		};
 		// Save lives in the view header, next to the tab's "…" menu.
 		this.saveAction = this.addAction("save", "Save (saves automatically ~2 s after each change)", async () => {
@@ -76,7 +76,7 @@ export class InkView extends TextFileView {
 		this.engine.onViewChange = () => this.updateOverlays();
 		// (0.9.4–0.9.8 faded the toolbars while writing; removed in 0.9.9: it flickered on every word)
 		// links open in a new tab
-		this.engine.onLinkOpen = (target) => this.app.workspace.openLinkText(target, this.file?.path ?? "", true);
+		this.engine.onLinkOpen = (target) => { void this.app.workspace.openLinkText(target, this.file?.path ?? "", true); };
 		this.buildToolbar();
 		this.buildZoom();
 		this.buildSelectionBar();
@@ -154,7 +154,7 @@ export class InkView extends TextFileView {
 			// already copied: point to the copy, and say plainly that writing here would make another one
 			text.appendText(copies.length === 1 ? "Already copied to " : `Already copied ${copies.length} times, newest: `);
 			const a = text.createEl("a", { text: copies[0].basename, href: "#" });
-			a.addEventListener("click", (e) => { e.preventDefault(); this.leaf.setViewState({ type: VIEW_TYPE, state: { file: copies[0].path }, active: true }); });
+			a.addEventListener("click", (e) => { e.preventDefault(); void this.leaf.setViewState({ type: VIEW_TYPE, state: { file: copies[0].path }, active: true }); });
 			text.appendText(". Writing here makes another copy; this note stays unchanged.");
 		} else {
 			text.appendText(`Writing makes a new Infinite Paper note (${plugin.previewCopyPath(file)}); this note stays unchanged.`);
@@ -166,8 +166,8 @@ export class InkView extends TextFileView {
 			const el = btns.createEl("button", { text: label });
 			el.addEventListener("click", (e) => { e.preventDefault(); fn(); });
 		};
-		mk("Open in tldraw", () => plugin.openInTldraw(file, this.leaf));
-		mk("Make copy", () => this.copyOnEdit());
+		mk("Open in tldraw", () => { void plugin.openInTldraw(file, this.leaf); });
+		mk("Make copy", () => { void this.copyOnEdit(); });
 		const x = btns.createEl("button", { cls: "ink-banner-x", attr: { "aria-label": "Hide" } });
 		setIcon(x, "x");
 		x.addEventListener("click", (e) => { e.preventDefault(); this.bannerClosed.add(file.path); this.renderBanner(); });
@@ -348,14 +348,15 @@ export class InkView extends TextFileView {
 
 		const head = el.createDiv({ cls: "ink-linkpop-head" });
 		head.createSpan({ cls: "ink-linkpop-title", text: lines.length ? `Links (${lines.length})` : "Links" });
-		iconBtn(head, "plus", "Add a link box", async () => {
+		iconBtn(head, "plus", "Add a link box", () => {
 			if (this.readOnlyNotice()) return;
 			const [w, h] = this.engine.viewSize();
 			const at = this.engine.toWorld(w / 2, h / 2);
-			const link = await this.pickNote("Link to a note…");
-			if (!link) return;
-			this.engine.insertLink(link, at);
-			this.addBacklinks([`[[${link.target}]]`]);
+			void this.pickNote("Link to a note…").then((link) => {
+				if (!link) return;
+				this.engine.insertLink(link, at);
+				this.addBacklinks([`[[${link.target}]]`]);
+			});
 		});
 		iconBtn(head, "x", "Close", () => this.toggleLinksPop(false));
 
@@ -379,7 +380,7 @@ export class InkView extends TextFileView {
 			open.createDiv({ cls: "ink-linkpop-sub", text: sub });
 			open.addEventListener("click", (e) => {
 				e.preventDefault();
-				if (target && this.file) this.app.workspace.openLinkText(target, this.file.path, true);
+				if (target && this.file) void this.app.workspace.openLinkText(target, this.file.path, true);
 			});
 			if (mine.length) iconBtn(row, "locate", "Show on page", () => {
 				const k = (this.locateIdx.get(target) ?? -1) + 1;
@@ -431,12 +432,12 @@ export class InkView extends TextFileView {
 		const m = new Menu();
 		build(m);
 		m.onHide(() => {
-			document.body.removeClass("infinite-paper-menu-open");
+			activeDocument.body.removeClass("infinite-paper-menu-open");
 			if (this.openMenu?.menu === m) this.openMenu = null;
 			this.lastMenuHide = { key, at: performance.now() };
 		});
 		this.openMenu = { key, menu: m };
-		document.body.addClass("infinite-paper-menu-open"); // compact menu styling, see styles.css
+		activeDocument.body.addClass("infinite-paper-menu-open"); // compact menu styling, see styles.css
 		m.showAtPosition(pos);
 	}
 
@@ -591,7 +592,7 @@ export class InkView extends TextFileView {
 				m.addItem((i) => i.setTitle("Performance overlay").setIcon("gauge").setChecked(!this.perfEl.hasClass("is-hidden")).onClick(() => this.togglePerf()));
 				m.addSeparator();
 				m.addItem((i) => i.setTitle("Smoothness tests (vs tldraw, developer mode)").setDisabled(true));
-				const flag = (k: keyof Exp, title: string) => m.addItem((i) => i.setTitle(title).setChecked(!!exp[k]).onClick(() => this.setExp({ [k]: !exp[k] } as Partial<Exp>)));
+				const flag = (k: keyof Exp, title: string) => m.addItem((i) => i.setTitle(title).setChecked(!!exp[k]).onClick(() => this.setExp({ [k]: !exp[k] })));
 				flag("crisp", "1 Sharp ink when still");
 				flag("rafBatch", "2 Draw once per frame");
 				flag("fps60", "2b Cap at 60 fps (tldraw)");
@@ -690,10 +691,10 @@ export class InkView extends TextFileView {
 		const box = this.engine.selectedLinkBox();
 		if (box) {
 			btn("external-link", "Open", `Open ${box.link!.label}`, () => this.engine.onLinkOpen(box.link!.target));
-			btn("pencil", "Change", "Point this box at another note", () => this.changeSelectedLink());
+			btn("pencil", "Change", "Point this box at another note", () => { void this.changeSelectedLink(); });
 		} else if (this.engine.selection.length) {
 			const p = this.plugin();
-			btn("link", "Link", "Link the selection to a note", () => this.insertLink());
+			btn("link", "Link", "Link the selection to a note", () => { void this.insertLink(); });
 			const transfer = (mode: "move" | "copy") => (b: HTMLElement) => {
 				const r = b.getBoundingClientRect();
 				this.toggleMenu(mode, (m) => {
@@ -740,7 +741,7 @@ export class InkView extends TextFileView {
 
 	setExp(patch: Partial<Exp>) {
 		Object.assign(exp, patch);
-		saveExp();
+		saveExp(this.app);
 		this.engine.applyExp();
 		new Notice(`${expLabel()}`, 2000);
 	}

@@ -1,13 +1,18 @@
-import { Notice, Platform, Plugin, TAbstractFile, TFile, TFolder, WorkspaceLeaf, normalizePath, moment } from "obsidian";
+import { Notice, Platform, Plugin, ViewState, TAbstractFile, TFile, TFolder, WorkspaceLeaf, normalizePath, moment } from "obsidian";
 import { CONVERTED_KEY, DEFAULT_HEADER, FM_KEY, addBacklinks, joinMarkdown, splitMarkdown } from "./mdformat";
 import { NotePicker } from "./picker";
 import { DEFAULT_SETTINGS, InkSettingTab, InkSettings, destinationFolder, live } from "./settings";
 import { importTldraw } from "./tldraw-import";
 import { compareWithTldraw, nodeRequire } from "./compare";
-import type { Exp } from "./exp";
+import { loadExp, type Exp } from "./exp";
 import { Rect, Store, Stroke, appendRows, dataText, strokeRow } from "./store";
 import { InkView, VIEW_TYPE } from "./view";
 import { synthStrokes } from "./synth";
+
+/** device kind for the load diagnostic (developer mode) */
+function deviceLabel() {
+	return Platform.isIosApp ? "iOS/iPadOS" : Platform.isAndroidApp ? "Android" : Platform.isMacOS ? "macOS" : Platform.isWin ? "Windows" : Platform.isLinux ? "Linux" : "other";
+}
 
 export default class InfinitePaperPlugin extends Plugin {
 	settings: InkSettings = { ...DEFAULT_SETTINGS };
@@ -15,8 +20,8 @@ export default class InfinitePaperPlugin extends Plugin {
 	private diag: Record<string, unknown> = {};
 
 	async loadSettings() {
-		const d = (await this.loadData()) ?? {};
-		this.settings = { ...DEFAULT_SETTINGS, ...(d.settings ?? {}) };
+		const d = (await this.loadData()) as { settings?: Partial<InkSettings> } | null;
+		this.settings = { ...DEFAULT_SETTINGS, ...(d?.settings ?? {}) };
 		live.settings = this.settings;
 	}
 
@@ -31,16 +36,17 @@ export default class InfinitePaperPlugin extends Plugin {
 
 	async onload() {
 		await this.loadSettings();
+		loadExp(this.app);
 		try {
 			this.setup();
 		} catch (e) {
 			const msg = "Infinite Paper onload error: " + String((e as Error)?.message ?? e) + "\n" + ((e as Error)?.stack ?? "");
 			console.error(msg);
 			new Notice(msg, 0);
-			if (this.settings.devMode) await this.saveDiag({ loadError: msg, ua: navigator.userAgent, at: new Date().toISOString() });
+			if (this.settings.devMode) await this.saveDiag({ loadError: msg, device: deviceLabel(), at: new Date().toISOString() });
 			throw e;
 		}
-		if (this.settings.devMode) await this.saveDiag({ loadedOk: this.manifest.version, ua: navigator.userAgent, at: new Date().toISOString() });
+		if (this.settings.devMode) await this.saveDiag({ loadedOk: this.manifest.version, device: deviceLabel(), at: new Date().toISOString() });
 	}
 
 	private setup() {
@@ -58,7 +64,7 @@ export default class InfinitePaperPlugin extends Plugin {
 				const f = this.app.workspace.getActiveFile();
 				const leaf = this.app.workspace.getMostRecentLeaf();
 				if (!f || !leaf || !this.isInkMarkdown(f) || leaf.view.getViewType() === VIEW_TYPE) return false;
-				if (!checking) leaf.setViewState({ type: VIEW_TYPE, state: { file: f.path } });
+				if (!checking) void leaf.setViewState({ type: VIEW_TYPE, state: { file: f.path } });
 				return true;
 			},
 		});
@@ -68,7 +74,7 @@ export default class InfinitePaperPlugin extends Plugin {
 			checkCallback: (checking) => {
 				const v = this.app.workspace.getActiveViewOfType(InkView);
 				if (!v || v.file?.extension !== "md") return false;
-				if (!checking) v.openAsMarkdown();
+				if (!checking) void v.openAsMarkdown();
 				return true;
 			},
 		});
@@ -78,7 +84,7 @@ export default class InfinitePaperPlugin extends Plugin {
 			checkCallback: (checking) => {
 				const f = this.app.workspace.getActiveFile();
 				if (!f || !this.isTldrawMarkdown(f)) return false;
-				if (!checking) this.convertFromTldraw(f);
+				if (!checking) void this.convertFromTldraw(f);
 				return true;
 			},
 		});
@@ -100,7 +106,7 @@ export default class InfinitePaperPlugin extends Plugin {
 			checkCallback: (checking) => {
 				const f = this.app.workspace.getActiveFile();
 				if (!f || !this.isTldrawMarkdown(f)) return false;
-				if (!checking) this.openInTldraw(f, this.app.workspace.getLeaf(false));
+				if (!checking) void this.openInTldraw(f, this.app.workspace.getLeaf(false));
 				return true;
 			},
 		});
@@ -110,7 +116,7 @@ export default class InfinitePaperPlugin extends Plugin {
 			checkCallback: (checking) => {
 				const f = this.app.workspace.getActiveFile();
 				if (!this.settings.devMode || !Platform.isDesktopApp || !f || !this.isTldrawMarkdown(f)) return false;
-				if (!checking) this.compareWithTldraw(f);
+				if (!checking) void this.compareWithTldraw(f);
 				return true;
 			},
 		});
@@ -121,7 +127,7 @@ export default class InfinitePaperPlugin extends Plugin {
 			checkCallback: (checking) => {
 				const v = this.app.workspace.getActiveViewOfType(InkView);
 				if (!v) return false;
-				if (!checking) v.insertLink();
+				if (!checking) void v.insertLink();
 				return true;
 			},
 		});
@@ -302,11 +308,11 @@ export default class InfinitePaperPlugin extends Plugin {
 				if (!line.includes('"link":')) return line;
 				const comma = line.endsWith(",");
 				try {
-					const row = JSON.parse(comma ? line.slice(0, -1) : line);
-					const x = row[3];
-					if (!x || !olds.has(x.link)) return line;
+					const row = JSON.parse(comma ? line.slice(0, -1) : line) as unknown[];
+					const x = row[3] as { link?: string; label?: string } | undefined;
+					if (!x || !x.link || !olds.has(x.link)) return line;
 					x.link = target;
-					if (oldLabels.has(x.label)) x.label = f.basename;
+					if (x.label && oldLabels.has(x.label)) x.label = f.basename;
 					return JSON.stringify(row) + (comma ? "," : "");
 				} catch { return line; }
 			}).join("\n"));
@@ -329,21 +335,22 @@ export default class InfinitePaperPlugin extends Plugin {
 	 * or a state carrying inkBypass, is let through untouched.
 	 */
 	private routeMarkdownDrawings() {
-		const plugin = this;
-		const proto = WorkspaceLeaf.prototype as any;
-		const orig = proto.setViewState;
+		const proto = WorkspaceLeaf.prototype;
+		const orig = Reflect.get(proto, "setViewState") as (this: WorkspaceLeaf, state: ViewState, eState?: unknown) => Promise<void>;
 		const tldrawTypes = ["markdown", "tldraw-view", "tldraw-read-only"];
-		proto.setViewState = function (state: any, eState?: any) {
-			const path = state?.state?.file;
-			if (path && !this.__inkRaw && !state.state.inkBypass) {
-				const f = plugin.app.vault.getAbstractFileByPath(path);
-				if (f instanceof TFile) {
-					if (state.type === "markdown" && plugin.isInkMarkdown(f)) state = { ...state, type: VIEW_TYPE };
-					// a tldraw note always opens itself (read-only here); its copies are linked from the banner
-					else if (plugin.settings.openTldrawInInk && tldrawTypes.includes(state.type) && plugin.isTldrawMarkdown(f)) state = { ...state, type: VIEW_TYPE };
-				}
-			}
-			return orig.call(this, state, eState);
+		// which view a note should really open in (an arrow function, so `this` is the plugin)
+		const route = (leaf: WorkspaceLeaf & { __inkRaw?: boolean }, state: ViewState): ViewState => {
+			const path = state.state?.file;
+			if (typeof path !== "string" || leaf.__inkRaw || state.state?.inkBypass) return state;
+			const f = this.app.vault.getAbstractFileByPath(path);
+			if (!(f instanceof TFile)) return state;
+			if (state.type === "markdown" && this.isInkMarkdown(f)) return { ...state, type: VIEW_TYPE };
+			// a tldraw note always opens itself (read-only here); its copies are linked from the banner
+			if (this.settings.openTldrawInInk && tldrawTypes.includes(state.type) && this.isTldrawMarkdown(f)) return { ...state, type: VIEW_TYPE };
+			return state;
+		};
+		proto.setViewState = function (this: WorkspaceLeaf, state: ViewState, eState?: unknown) {
+			return orig.call(this, route(this, state), eState);
 		};
 		this.register(() => { proto.setViewState = orig; });
 	}
@@ -357,7 +364,7 @@ export default class InfinitePaperPlugin extends Plugin {
 	findInkCopies(src: TFile): TFile[] {
 		const out: TFile[] = [];
 		for (const f of this.app.vault.getMarkdownFiles()) {
-			const fmv = this.app.metadataCache.getFileCache(f)?.frontmatter; const v = fmv?.[CONVERTED_KEY];
+			const fmv = this.app.metadataCache.getFileCache(f)?.frontmatter; const v: unknown = fmv?.[CONVERTED_KEY];
 			if (typeof v !== "string") continue;
 			const target = this.app.metadataCache.getFirstLinkpathDest(v.replace(/^\[\[|\]\]$/g, "").split("|")[0], f.path);
 			if (target === src) out.push(f);
@@ -377,7 +384,7 @@ export default class InfinitePaperPlugin extends Plugin {
 
 	/** for an Ink copy: the tldraw note it was made from */
 	originalOf(f: TFile): TFile | null {
-		const fmv = this.app.metadataCache.getFileCache(f)?.frontmatter; const v = fmv?.[CONVERTED_KEY];
+		const fmv = this.app.metadataCache.getFileCache(f)?.frontmatter; const v: unknown = fmv?.[CONVERTED_KEY];
 		if (typeof v !== "string") return null;
 		return this.app.metadataCache.getFirstLinkpathDest(v.replace(/^\[\[|\]\]$/g, "").split("|")[0], f.path);
 	}

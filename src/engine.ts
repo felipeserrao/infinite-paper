@@ -131,7 +131,7 @@ export class InkEngine {
 		this.tiles.clear();
 		this.crisp.valid = false; this.crisp.key = ""; this.crisp.job = null;
 		if (exp.desync !== this.liveDesync) {
-			const c = document.createElement("canvas");
+			const c = createEl("canvas");
 			c.className = "ink-live";
 			c.width = this.live.width; c.height = this.live.height;
 			c.style.width = this.live.style.width; c.style.height = this.live.style.height;
@@ -145,7 +145,7 @@ export class InkEngine {
 		this.requestFrame();
 	}
 
-	destroy() { cancelAnimationFrame(this.raf); this.tiles.clear(); }
+	destroy() { window.cancelAnimationFrame(this.raf); this.tiles.clear(); }
 
 	resize(w: number, h: number) {
 		this.dpr = window.devicePixelRatio || 1;
@@ -234,11 +234,11 @@ export class InkEngine {
 	// ---------- frame / compose ----------
 	requestFrame() {
 		if (this.raf) return;
-		this.raf = requestAnimationFrame((ts) => { this.raf = 0; this.frame(ts); });
+		this.raf = window.requestAnimationFrame((ts) => { this.raf = 0; this.frame(ts); });
 	}
 
 	// ---------- crisp: exact-resolution vector render of the view once the camera is still ----------
-	private crisp = { canvas: document.createElement("canvas"), ctx: null as CanvasRenderingContext2D | null, key: "", valid: false, job: null as Stroke[] | null, idx: 0, changedAt: 0, t: 0 };
+	private crisp = { canvas: createEl("canvas"), ctx: null as CanvasRenderingContext2D | null, key: "", valid: false, job: null as Stroke[] | null, idx: 0, changedAt: 0, t: 0 };
 	private camKey() { return `${this.cam.x},${this.cam.y},${this.cam.z},${this.cssW},${this.cssH}`; }
 
 	/** returns true if more crisp work is pending */
@@ -469,10 +469,10 @@ export class InkEngine {
 		const tick = () => {
 			this.liveRaf = 0;
 			if (this.drawPointer === null || this.tool !== "pen") return;
-			if (exp.fps60 && performance.now() - this.perf.lastDrawAt < 15) { this.liveRaf = requestAnimationFrame(tick); return; }
+			if (exp.fps60 && performance.now() - this.perf.lastDrawAt < 15) { this.liveRaf = window.requestAnimationFrame(tick); return; }
 			this.drawLiveStroke();
 		};
-		this.liveRaf = requestAnimationFrame(tick);
+		this.liveRaf = window.requestAnimationFrame(tick);
 	}
 
 	private drawLiveStroke() {
@@ -794,7 +794,7 @@ export class InkEngine {
 		if (this.resizing) { this.endResize(); return; }
 		if (this.moving) { this.endMove(); return; }
 		if (tool === "pen") {
-			cancelAnimationFrame(this.liveRaf); this.liveRaf = 0;
+			window.cancelAnimationFrame(this.liveRaf); this.liveRaf = 0;
 			const dur = (performance.now() - this.perf.strokeStart) / 1000;
 			if (dur > 0.15) { this.perf.evtRate.push(this.perf.strokeEvts / dur); this.perf.drawRate.push(this.perf.strokeDraws / dur); }
 			// pencil tap on a link box: select it (tldraw: the pen edits, a finger opens); no dot

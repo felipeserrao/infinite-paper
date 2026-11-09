@@ -41,7 +41,7 @@ export const DEFAULT_SETTINGS: InkSettings = {
 };
 
 /** the plugin's current settings, for code (like the view) that has no handle on the plugin */
-export const live = { settings: { ...DEFAULT_SETTINGS } as InkSettings };
+export const live: { settings: InkSettings } = { settings: { ...DEFAULT_SETTINGS } };
 
 class FolderSuggest extends AbstractInputSuggest<TFolder> {
 	constructor(app: App, private input: HTMLInputElement, private onPick: (v: string) => void) { super(app, input); }
@@ -86,7 +86,7 @@ export class InkSettingTab extends PluginSettingTab {
 				.addText((t) => {
 					t.setPlaceholder("e.g. Notes").setValue(s.defaultFolder)
 						.onChange(async (v) => { s.defaultFolder = v.trim(); await save(); });
-					new FolderSuggest(this.app, t.inputEl, async (v) => { s.defaultFolder = v; await save(); });
+					new FolderSuggest(this.app, t.inputEl, (v) => { s.defaultFolder = v; void save(); });
 				});
 		}
 		if (s.destinationMethod === "colocate") {

@@ -48,7 +48,7 @@ export class TileCache {
 	touch(t: Tile) { t.lastUsed = this.frame; }
 
 	private alloc(L: number, tx: number, ty: number): Tile {
-		const canvas = this.pool.pop() ?? document.createElement("canvas");
+		const canvas = this.pool.pop() ?? createEl("canvas");
 		canvas.width = TILE; canvas.height = TILE;
 		const ctx = canvas.getContext("2d")!;
 		ctx.setTransform(1, 0, 0, 1, 0, 0);

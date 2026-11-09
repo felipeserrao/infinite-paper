@@ -1,6 +1,8 @@
+import type { App } from "obsidian";
+
 /**
  * Smoothness experiments: each switch copies one thing tldraw does differently.
- * Saved per device (localStorage) so each device can differ. Shown only in developer mode.
+ * Saved per device and vault (Obsidian's local storage) so each device can differ. Shown only in developer mode.
  */
 export interface Exp {
 	/** finished ink re-rendered as vectors at exact screen resolution once the camera is still */
@@ -31,11 +33,15 @@ export const EXP_TLDRAW: Partial<Exp> = { crisp: true, rafBatch: true, fps60: tr
 
 const KEY = "infinite-paper-exp";
 
-export const exp: Exp = (() => {
-	try { return { ...EXP_DEFAULTS, ...JSON.parse(localStorage.getItem(KEY) || "{}") }; } catch { return { ...EXP_DEFAULTS }; }
-})();
+export const exp: Exp = { ...EXP_DEFAULTS };
 
-export function saveExp() { localStorage.setItem(KEY, JSON.stringify(exp)); }
+/** read the saved switches (plugin load) */
+export function loadExp(app: App) {
+	const saved: unknown = app.loadLocalStorage(KEY);
+	if (saved && typeof saved === "object") Object.assign(exp, EXP_DEFAULTS, saved as Partial<Exp>);
+}
+
+export function saveExp(app: App) { app.saveLocalStorage(KEY, { ...exp }); }
 
 export function expLabel() {
 	const on: string[] = [];

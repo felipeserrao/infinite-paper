@@ -38,15 +38,39 @@ export interface TldrawImport {
 	backlinks: string[];
 }
 
+// ---------- the parts of tldraw's stored data this importer reads (records have more fields) ----------
+interface Vec { x: number; y: number }
+interface RichText { type?: string; text?: string; content?: RichText[] }
+interface Segment { type?: string; points?: Pt[] | string; path?: string }
+interface TLProps {
+	size?: string; color?: string; dash?: string; isPen?: boolean; scale?: number; scaleX?: number; scaleY?: number;
+	segments?: Segment[]; w?: number; h?: number; growY?: number; geo?: string;
+	points?: Record<string, Vec & { index?: string }>;
+	start?: Vec; end?: Vec; kind?: string; elbowMidPoint?: number; bend?: number; arrowheadStart?: string; arrowheadEnd?: string;
+	text?: string; richText?: RichText; name?: string;
+	// arrow bindings
+	terminal?: string; isPrecise?: boolean; normalizedAnchor?: Vec;
+}
+interface TLRecord {
+	typeName?: string; id: string; type?: string; parentId?: string; index?: string;
+	x?: number; y?: number; z?: number; rotation?: number; props?: TLProps;
+	meta?: { obsidianLink?: { type?: string; target?: string } };
+	currentPageId?: string; fromId?: string; toId?: string;
+}
+interface TLShape extends TLRecord { type: string; parentId: string; props: TLProps }
+interface ArrowBinding { isPrecise?: boolean; normalizedAnchor?: Vec; toId?: string }
+interface Snapshot { records?: TLRecord[]; store?: Record<string, TLRecord>; document?: { store?: Record<string, TLRecord> } }
+type Packed = Snapshot & { compressed?: boolean; payload?: string };
+
 export function isTldrawMarkdown(text: string) {
 	return text.includes(START);
 }
 
 /** the decompressed tldraw store snapshot ({ store/records, schema }) */
-function readSnapshot(block: string, warnings: string[]): any {
-	let d: any;
+function readSnapshot(block: string, warnings: string[]): Snapshot {
+	let d: Packed & { raw?: Packed };
 	try {
-		d = JSON.parse(block);
+		d = JSON.parse(block) as Packed & { raw?: Packed };
 	} catch {
 		// seen once: two compressed payloads spliced together; the first one is intact
 		const m = block.match(/"payload":\s*"([^"]+)"/);
@@ -55,16 +79,16 @@ function readSnapshot(block: string, warnings: string[]): any {
 		d = { raw: { compressed: true, payload: m[1] } };
 	}
 	// current plugin: { meta, raw: {compressed, payload} | snapshot }; older: { compressed, payload } at top level
-	let raw = d.raw ?? d;
+	let raw: Packed = d.raw ?? d;
 	if (raw.compressed) {
-		const json = decompressFromBase64(raw.payload);
+		const json = decompressFromBase64(raw.payload ?? "");
 		if (!json) throw new Error("could not decompress tldraw data");
-		raw = JSON.parse(json);
+		raw = JSON.parse(json) as Packed;
 	}
 	return raw;
 }
 
-function richTextToString(node: any): string {
+function richTextToString(node: RichText | undefined): string {
 	if (!node) return "";
 	if (typeof node.text === "string") return node.text;
 	if (!Array.isArray(node.content)) return "";
@@ -78,7 +102,7 @@ const mul = (p: M, q: M): M => [
 	p[0] * q[2] + p[2] * q[3], p[1] * q[2] + p[3] * q[3],
 	p[0] * q[4] + p[2] * q[5] + p[4], p[1] * q[4] + p[3] * q[5] + p[5],
 ];
-const local = (s: any): M => {
+const local = (s: TLRecord): M => {
 	const r = s.rotation || 0, c = Math.cos(r), n = Math.sin(r);
 	return [c, n, -n, c, s.x || 0, s.y || 0];
 };
@@ -113,12 +137,13 @@ type Pt = { x: number; y: number; z?: number };
  *   these shapes also carry `scaleX` / `scaleY` in props.
  * Returns null for an encoding we don't know.
  */
-function segmentPoints(seg: any, p: any): Pt[] | null {
+function segmentPoints(seg: Segment, p: TLProps): Pt[] | null {
 	let pts: Pt[];
 	if (Array.isArray(seg.points)) pts = seg.points;
 	else if (typeof seg.path === "string" || typeof seg.points === "string") {
+		const enc = typeof seg.path === "string" ? seg.path : (seg.points as string);
 		const delta = typeof seg.path === "string";
-		const dv = b64Bytes(delta ? seg.path : seg.points);
+		const dv = b64Bytes(enc);
 		pts = [];
 		if (delta) {
 			if (dv.byteLength < 12) return [];
@@ -133,8 +158,8 @@ function segmentPoints(seg: any, p: any): Pt[] | null {
 	return sx === 1 && sy === 1 ? pts : pts.map((q) => ({ x: q.x * sx, y: q.y * sy, z: q.z }));
 }
 
-function drawStrokeWidth(p: any): number {
-	const sw = ((STROKE_SIZES[p.size] ?? 2) + 1) * (p.scale || 1);
+function drawStrokeWidth(p: TLProps): number {
+	const sw = ((STROKE_SIZES[p.size ?? ""] ?? 2) + 1) * (p.scale || 1);
 	if (p.dash !== "draw" || !p.isPen) return sw;
 	let sum = 0, n = 0;
 	for (const seg of p.segments || []) for (const q of segmentPoints(seg, p) ?? []) if (typeof q.z === "number") { sum += q.z; n++; }
@@ -162,7 +187,7 @@ function densify(pl: number[]): number[] {
 }
 
 /** geo shape in its local box. Each straight side is its own stroke so corners stay sharp. */
-function geoPolylines(p: any): number[][] {
+function geoPolylines(p: TLProps): number[][] {
 	const w = p.w ?? 0, h = (p.h ?? 0) + (p.growY ?? 0);
 	const sides = (poly: number[]) => {
 		const out: number[][] = [];
@@ -223,14 +248,15 @@ function clipToBox(from: [number, number], to: [number, number], box: number[]):
 }
 
 /** arrow body (straight, arc or elbow) plus arrowheads, in page space */
-function arrowPolylines(s: any, m: M, terminal: (side: "start" | "end") => Terminal): number[][] {
-	const p = s.props;
+function arrowPolylines(s: TLShape, m: M, terminal: (side: "start" | "end") => Terminal): number[][] {
+	const p = s.props, ps = p.start ?? { x: 0, y: 0 }, pe = p.end ?? { x: 0, y: 0 };
 	const tS = terminal("start"), tE = terminal("end");
-	let a = (tS?.point ?? apply(m, [p.start.x, p.start.y])) as [number, number];
-	let b = (tE?.point ?? apply(m, [p.end.x, p.end.y])) as [number, number];
+	let a = (tS?.point ?? apply(m, [ps.x, ps.y])) as [number, number];
+	let b = (tE?.point ?? apply(m, [pe.x, pe.y])) as [number, number];
 	if (tS?.clip) a = clipToBox(b, a, tS.box);
 	if (tE?.clip) b = clipToBox(a, b, tE.box);
-	const sw = (STROKE_SIZES[p.size] ?? 2) * (p.scale || 1);
+	const sw = (STROKE_SIZES[p.size ?? ""] ?? 2) * (p.scale || 1);
+	const bend = p.bend ?? 0;
 
 	let body: number[];
 	if (p.kind === "elbow") {
@@ -243,10 +269,10 @@ function arrowPolylines(s: any, m: M, terminal: (side: "start" | "end") => Termi
 		else if (ds === "v" && de === "v") { const y = a[1] + (b[1] - a[1]) * mid; body = [a[0], a[1], a[0], y, b[0], y, b[0], b[1]]; }
 		else if (ds === "v") body = [a[0], a[1], a[0], b[1], b[0], b[1]];
 		else body = [a[0], a[1], b[0], a[1], b[0], b[1]];
-	} else if (Math.abs(p.bend || 0) > 8 * (p.scale || 1)) {
+	} else if (Math.abs(bend) > 8 * (p.scale || 1)) {
 		// arc through the middle handle: tldraw puts it at med + per(u) * -bend, per(x, y) = (y, -x)
 		const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1, ux = (b[0] - a[0]) / L, uy = (b[1] - a[1]) / L;
-		const c: [number, number] = [(a[0] + b[0]) / 2 - uy * p.bend, (a[1] + b[1]) / 2 + ux * p.bend];
+		const c: [number, number] = [(a[0] + b[0]) / 2 - uy * bend, (a[1] + b[1]) / 2 + ux * bend];
 		body = arcThrough(a, c, b);
 	} else body = [a[0], a[1], b[0], b[1]];
 
@@ -296,25 +322,26 @@ export function importTldraw(text: string): TldrawImport {
 	const warnings: string[] = [];
 
 	const snap = readSnapshot(block, warnings);
-	const records: any[] = snap.records ?? Object.values(snap.store ?? snap.document?.store ?? {});
+	const records: TLRecord[] = snap.records ?? Object.values(snap.store ?? snap.document?.store ?? {});
 
-	const shapes = new Map<string, any>();
-	const children = new Map<string, any[]>();
+	const shapes = new Map<string, TLShape>();
+	const children = new Map<string, TLShape[]>();
 	let page: string | null = null;
 	let camera: TldrawImport["camera"] = null;
 	for (const r of records) {
 		if (r.typeName === "shape") {
-			shapes.set(r.id, r);
-			let a = children.get(r.parentId);
-			if (!a) children.set(r.parentId, (a = []));
-			a.push(r);
+			const sh: TLShape = { ...r, type: r.type ?? "", parentId: r.parentId ?? "", props: r.props ?? {} };
+			shapes.set(sh.id, sh);
+			let a = children.get(sh.parentId);
+			if (!a) children.set(sh.parentId, (a = []));
+			a.push(sh);
 		} else if (r.typeName === "page" && !page) page = r.id;
 		else if (r.typeName === "instance" && r.currentPageId) page = r.currentPageId;
 	}
 	for (const r of records) {
 		if (r.typeName === "camera" && (!page || r.id === "camera:" + page)) {
 			const z = r.z || 1;
-			camera = { x: r.x * z, y: r.y * z, z };
+			camera = { x: (r.x ?? 0) * z, y: (r.y ?? 0) * z, z };
 		}
 	}
 
@@ -334,33 +361,33 @@ export function importTldraw(text: string): TldrawImport {
 		pageM.set(id, m);
 		return m;
 	};
-	const bindings = new Map<string, any>(); // `${arrowId}:${start|end}` -> binding props + target
+	const bindings = new Map<string, ArrowBinding>(); // `${arrowId}:${start|end}` -> binding props + target
 	for (const r of records) {
 		if (r.typeName === "binding" && r.type === "arrow" && r.props?.terminal) bindings.set(`${r.fromId}:${r.props.terminal}`, { ...r.props, toId: r.toId });
 	}
 
 	/** outline strokes (tldraw's geo/line/arrow width: STROKE_SIZES, no +1) */
-	const outline = (p: any, polylines: number[][]) => {
-		const size = (STROKE_SIZES[p.size] ?? 2) * (p.scale || 1);
-		const color = TL_COLORS[p.color] ?? TL_COLORS.black;
+	const outline = (p: TLProps, polylines: number[][]) => {
+		const size = (STROKE_SIZES[p.size ?? ""] ?? 2) * (p.scale || 1);
+		const color = TL_COLORS[p.color ?? ""] ?? TL_COLORS.black;
 		for (const pl of polylines) if (pl.length >= 4) strokes.push({ color, size, pts: new Float32Array(densify(pl)) });
 	};
 
 	const backlinks: string[] = [];
-	const linkOf = (s: any): { target: string; label: string } | null => {
-		const p = s.props || {};
+	const linkOf = (s: TLShape): { target: string; label: string } | null => {
+		const p = s.props;
 		const t = (typeof p.text === "string" ? p.text : richTextToString(p.richText)).trim();
 		const m = t.match(/^🔗\s*(.+)$/u);
 		const meta = s.meta?.obsidianLink;
-		if (meta?.type === "wiki" && meta.target) return { target: String(meta.target), label: m ? m[1].trim() : String(meta.target).split("/").pop()! };
+		if (meta?.type === "wiki" && meta.target) return { target: meta.target, label: m ? m[1].trim() : meta.target.split("/").pop()! };
 		return m ? { target: m[1].trim(), label: m[1].trim() } : null;
 	};
 	// depth-first in tldraw's paint order (fractional index strings sort with plain string comparison)
-	const byIndex = (a: any, b: any) => (a.index < b.index ? -1 : a.index > b.index ? 1 : 0);
+	const byIndex = (a: { index?: string }, b: { index?: string }) => { const x = a.index ?? "", y = b.index ?? ""; return x < y ? -1 : x > y ? 1 : 0; };
 	const roots = [...children.entries()].filter(([pid]) => !shapes.has(pid));
-	const visit = (s: any, parent: M) => {
+	const visit = (s: TLShape, parent: M) => {
 		const m = mul(parent, local(s));
-		const p = s.props || {};
+		const p = s.props;
 		if (s.type === "draw" || s.type === "highlight") {
 			const pts: number[] = [];
 			for (const seg of p.segments || []) {
@@ -370,28 +397,28 @@ export function importTldraw(text: string): TldrawImport {
 			}
 			if (pts.length >= 2) {
 				const size = drawStrokeWidth(p);
-				strokes.push({ color: TL_COLORS[p.color] ?? TL_COLORS.black, size, pts: new Float32Array(pts) });
+				strokes.push({ color: TL_COLORS[p.color ?? ""] ?? TL_COLORS.black, size, pts: new Float32Array(pts) });
 			}
 			if (s.type === "highlight") skip("highlight (converted as ink)");
 		} else if (s.type === "geo" && linkOf(s)) {
 			// a link box ("🔗 Note" + meta.obsidianLink): an Infinite Paper link box, not ink
 			const l = linkOf(s)!, c = apply(m, [0, 0, p.w ?? 240, (p.h ?? 240) + (p.growY ?? 0)]);
-			strokes.push({ color: TL_COLORS[p.color] ?? TL_COLORS.black, size: 3.5, pts: new Float32Array(c), link: l });
+			strokes.push({ color: TL_COLORS[p.color ?? ""] ?? TL_COLORS.black, size: 3.5, pts: new Float32Array(c), link: l });
 			if (!backlinks.includes(`[[${l.target}]]`)) backlinks.push(`[[${l.target}]]`);
 			for (const ch of (children.get(s.id) || []).sort(byIndex)) visit(ch, m);
 			return;
 		} else if (s.type === "geo") {
 			outline(p, geoPolylines(p).map((pl) => apply(m, pl)));
 		} else if (s.type === "line") {
-			const pts: number[] = []; for (const q of Object.values(p.points || {}).sort(byIndex) as { x: number; y: number }[]) pts.push(q.x, q.y);
+			const pts: number[] = []; for (const q of Object.values(p.points || {}).sort(byIndex)) pts.push(q.x, q.y);
 			outline(p, [apply(m, pts)]);
 		} else if (s.type === "arrow") {
 			outline(p, arrowPolylines(s, m, (side) => {
 				const b = bindings.get(`${s.id}:${side}`);
-				const target = b && shapes.get(b.toId);
-				if (!target) return null;
-				const tp = target.props || {}, w = tp.w ?? 0, h = (tp.h ?? 0) + (tp.growY ?? 0);
-				const a = b.isPrecise ? b.normalizedAnchor : { x: 0.5, y: 0.5 };
+				const target = b?.toId ? shapes.get(b.toId) : undefined;
+				if (!b || !target) return null;
+				const tp = target.props, w = tp.w ?? 0, h = (tp.h ?? 0) + (tp.growY ?? 0);
+				const a = b.isPrecise && b.normalizedAnchor ? b.normalizedAnchor : { x: 0.5, y: 0.5 };
 				const tm = pageTransform(target.id);
 				return { point: apply(tm, [a.x * w, a.y * h]) as [number, number], box: apply(tm, [0, 0, w, 0, w, h, 0, h]), clip: !b.isPrecise, anchor: a };
 			}));
@@ -403,11 +430,11 @@ export function importTldraw(text: string): TldrawImport {
 		const link = t.match(/^🔗\s*(.+)$/u);
 		if (link) t = `[[${link[1].trim()}]]`;
 		if (t) texts.push(t);
-		if (s.type === "frame" && p.name) texts.push(String(p.name));
+		if (s.type === "frame" && p.name) texts.push(p.name);
 		for (const c of (children.get(s.id) || []).sort(byIndex)) visit(c, m);
 	};
 	// the current page keeps its coordinates (so the camera matches); other pages are stacked below it
-	const pages = records.filter((r) => r.typeName === "page").sort(byIndex).map((r) => r.id as string);
+	const pages = records.filter((r) => r.typeName === "page").sort(byIndex).map((r) => r.id);
 	const order = page ? [page, ...pages.filter((p) => p !== page)] : pages;
 	for (const [pid] of roots) if (!order.includes(pid)) order.push(pid);
 	let bottom = -Infinity, left = Infinity;

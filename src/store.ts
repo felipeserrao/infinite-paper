@@ -213,7 +213,7 @@ function wrapText(ctx: CanvasRenderingContext2D, text: string, maxW: number): st
 	for (const l of out) {
 		if (ctx.measureText(l).width <= maxW) { res.push(l); continue; }
 		let c = "";
-		for (const ch of Array.from(l) as string[]) { if (c && ctx.measureText(c + ch).width > maxW) { res.push(c); c = ch; } else c += ch; }
+		for (const ch of Array.from(l)) { if (c && ctx.measureText(c + ch).width > maxW) { res.push(c); c = ch; } else c += ch; }
 		if (c) res.push(c);
 	}
 	return res;
@@ -372,7 +372,7 @@ export class Store {
 	load(text: string): { x: number; y: number; z: number } | null {
 		this.clear();
 		if (!text.trim()) return null;
-		const data = JSON.parse(text);
+		const data = JSON.parse(text) as { strokes: unknown[]; camera?: { x: number; y: number; z: number } };
 		for (const [color, size, enc, extra] of data.strokes as [string, number, string, { link?: string; label?: string; frame?: number }?][]) {
 			const pts = decodePoints(enc);
 			const link: LinkInfo | undefined = extra?.link ? { target: extra.link, label: extra.label ?? extra.link } : undefined;
@@ -429,7 +429,7 @@ export function appendRows(data: string, strokes: Stroke[], place: (target: Rect
 	const k = data.indexOf('"strokes":[');
 	let camera = { x: 0, y: 0, z: 1 }, bounds: Rect | null = null, body = "";
 	if (k >= 0) {
-		const meta = JSON.parse(data.slice(0, k) + '"_":0}');
+		const meta = JSON.parse(data.slice(0, k) + '"_":0}') as { camera?: { x: number; y: number; z: number }; bounds?: Rect };
 		camera = meta.camera ?? camera;
 		body = data.slice(k + '"strokes":['.length, data.lastIndexOf("]")).replace(/^\s+|\s+$/g, "");
 		if (meta.bounds) bounds = meta.bounds;

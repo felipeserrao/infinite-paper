@@ -28,7 +28,7 @@ export interface CompareStats {
 	notShownByInk: Record<string, number>;
 }
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const sleep = (ms: number) => new Promise((r) => window.setTimeout(r, ms));
 
 async function waitFor<T>(fn: () => T | null | undefined, ms: number): Promise<T> {
 	const end = Date.now() + ms;
@@ -40,14 +40,24 @@ async function waitFor<T>(fn: () => T | null | undefined, ms: number): Promise<T
 	}
 }
 
-/** Node APIs (desktop Obsidian only), without needing @types/node */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Node modules, untyped here
-export const nodeRequire = (window as unknown as { require: (m: string) => any }).require;
+/** the few Node APIs used here (desktop Obsidian only), typed without needing @types/node */
+interface NodeFs { mkdirSync(path: string, opts: { recursive: boolean }): void; writeFileSync(path: string, data: Uint8Array | string): void }
+interface NodePath { join(...parts: string[]): string }
+interface NodeOs { tmpdir(): string }
+interface NodeRequire { (m: "fs"): NodeFs; (m: "path"): NodePath; (m: "os"): NodeOs }
+export const nodeRequire = (window as unknown as { require: NodeRequire }).require;
+
+/** the parts of tldraw's editor this check uses */
+interface TldrawEditor {
+	getCurrentPageShapeIds(): Set<string>;
+	getShapesPageBounds(ids: string[]): { x: number; y: number; w: number; h: number };
+	toImage(ids: string[], opts: { format: "png"; background: boolean; padding: number; scale: number }): Promise<{ blob: Blob; width: number; height: number }>;
+}
 
 function toPng(c: HTMLCanvasElement): Promise<Uint8Array> {
-	return new Promise((res, rej) => c.toBlob(async (b) => {
-		if (!b) return rej(new Error("toBlob failed"));
-		res(new Uint8Array(await b.arrayBuffer()));
+	return new Promise((res, rej) => c.toBlob((b) => {
+		if (!b) { rej(new Error("toBlob failed")); return; }
+		b.arrayBuffer().then((buf) => res(new Uint8Array(buf)), rej);
 	}, "image/png"));
 }
 
@@ -100,7 +110,8 @@ async function run(app: App, file: TFile, outDir: string, scale: number): Promis
 	let tl: { blob: Blob; width: number; height: number }, bounds: { x: number; y: number; w: number; h: number }, nShapes: number;
 	try {
 		await leaf.setViewState({ type: "tldraw-view", state: { file: file.path, manuallyTriggered: true, inkBypass: true }, active: true });
-		const editor: any = await waitFor(() => (leaf.view as any)?.getEditor?.(), 15000);
+		const view = leaf.view as unknown as { getEditor?: () => TldrawEditor | undefined };
+		const editor = await waitFor(() => view.getEditor?.(), 15000);
 		await waitFor(() => editor.getCurrentPageShapeIds().size > 0 || null, 15000);
 		await sleep(500);
 		const ids = [...editor.getCurrentPageShapeIds()];
@@ -116,7 +127,7 @@ async function run(app: App, file: TFile, outDir: string, scale: number): Promis
 	const r = importTldraw(await app.vault.read(file));
 	const bmp = await createImageBitmap(tl.blob); // its real pixel size (tldraw reports fractional sizes)
 	const W = bmp.width, H = bmp.height;
-	const inkC = document.createElement("canvas"); inkC.width = W; inkC.height = H;
+	const inkC = createEl("canvas"); inkC.width = W; inkC.height = H;
 	const ictx = inkC.getContext("2d")!;
 	ictx.fillStyle = "#fff"; ictx.fillRect(0, 0, W, H);
 	// image width = (bounds.w + 2 PAD) * scale; derive the exact factor from it in case tldraw rounded
@@ -126,7 +137,7 @@ async function run(app: App, file: TFile, outDir: string, scale: number): Promis
 	for (const s of r.strokes) paintStroke(ictx, st.create(s.color, s.size, s.pts));
 	ictx.setTransform(1, 0, 0, 1, 0, 0);
 
-	const tlC = document.createElement("canvas"); tlC.width = W; tlC.height = H;
+	const tlC = createEl("canvas"); tlC.width = W; tlC.height = H;
 	const tctx = tlC.getContext("2d")!;
 	tctx.drawImage(bmp, 0, 0);
 
@@ -158,13 +169,13 @@ async function run(app: App, file: TFile, outDir: string, scale: number): Promis
 	dists.sort((x, y) => x - y);
 	const union = inT + inI - (inT - onlyT);
 
-	const ovC = document.createElement("canvas"); ovC.width = W; ovC.height = H;
+	const ovC = createEl("canvas"); ovC.width = W; ovC.height = H;
 	ovC.getContext("2d")!.putImageData(ov, 0, 0);
 	fs.writeFileSync(path.join(outDir, "overlay.png"), await toPng(ovC));
 	fs.writeFileSync(path.join(outDir, "tldraw.png"), await toPng(tlC));
 	fs.writeFileSync(path.join(outDir, "ink.png"), await toPng(inkC));
 	const k = Math.min(1, 1400 / Math.max(W, H));
-	const sm = document.createElement("canvas"); sm.width = Math.round(W * k); sm.height = Math.round(H * k);
+	const sm = createEl("canvas"); sm.width = Math.round(W * k); sm.height = Math.round(H * k);
 	const smx = sm.getContext("2d")!; smx.imageSmoothingQuality = "high"; smx.drawImage(ovC, 0, 0, sm.width, sm.height);
 	fs.writeFileSync(path.join(outDir, "overview.png"), await toPng(sm));
 	// the three tiles with the most off-by-more-than-1.5px ink, at full resolution
@@ -172,7 +183,7 @@ async function run(app: App, file: TFile, outDir: string, scale: number): Promis
 	const worst: { file: string; x: number; y: number; score: number }[] = [];
 	for (const [j, t] of order.entries()) {
 		const x = (t % tw) * TILE, y = Math.floor(t / tw) * TILE;
-		const c = document.createElement("canvas"); c.width = Math.min(TILE, W - x) * 2 + 8; c.height = Math.min(TILE, H - y);
+		const c = createEl("canvas"); c.width = Math.min(TILE, W - x) * 2 + 8; c.height = Math.min(TILE, H - y);
 		const cx = c.getContext("2d")!; cx.fillStyle = "#ccc"; cx.fillRect(0, 0, c.width, c.height);
 		const cw = Math.min(TILE, W - x);
 		cx.drawImage(ovC, x, y, cw, c.height, 0, 0, cw, c.height);   // left: overlay
