@@ -1,0 +1,22 @@
+{
+  "name": "infinite-paper",
+  "version": "1.0.0",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "build": "tsc --noEmit && node esbuild.config.mjs production",
+    "dev": "node esbuild.config.mjs"
+  },
+  "devDependencies": {
+    "builtin-modules": "3.3.0",
+    "esbuild": "^0.23.1",
+    "obsidian": "^1.8.7",
+    "typescript": "^5.5.4"
+  },
+  "dependencies": {
+    "lz-string": "^1.5.0",
+    "perfect-freehand": "^1.2.2"
+  },
+  "license": "MIT",
+  "description": "Handwritten notes on an endless white page, like a notebook for studying and class notes. Smooth, sharp ink that stays fast even in huge notebooks."
+}

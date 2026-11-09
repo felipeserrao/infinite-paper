@@ -1,0 +1,9 @@
+{
+	"id": "infinite-paper",
+	"name": "Infinite Paper",
+	"version": "1.0.0",
+	"minAppVersion": "1.7.7",
+	"description": "Handwritten notes on an endless white page, like a notebook for studying and class notes. Smooth, sharp ink that stays fast even in huge notebooks.",
+	"author": "Felipe Serra",
+	"isDesktopOnly": false
+}
