@@ -86,6 +86,7 @@ export class InkView extends TextFileView {
 		this.engine.onLinkOpen = (target) => { void this.app.workspace.openLinkText(target, this.file?.path ?? "", true); };
 		this.buildToolbar();
 		this.buildZoom();
+		this.buildPenModeChip();
 		this.buildSelectionBar();
 		this.linksPop = this.contentEl.createDiv({ cls: "ink-linkpop is-hidden" });
 		this.linksAction = this.addAction("link", "Links in this drawing", () => this.toggleLinksPop());
@@ -462,9 +463,24 @@ export class InkView extends TextFileView {
 		return b;
 	}
 
+	/** "Pen mode ×" at the top while pen mode is on; a tap leaves it (tldraw's "Exit pen mode") */
+	private penChip!: HTMLElement;
+	private buildPenModeChip() {
+		this.penChip = this.contentEl.createDiv({ cls: "ink-penmode is-hidden" });
+		const b = this.penChip.createEl("button", { cls: "ink-btn has-text", attr: { "aria-label": "Leave pen mode: one finger pans again until you next use the pen" } });
+		setIcon(b, "pen-line");
+		b.createSpan({ text: "Pen mode" });
+		const x = b.createSpan({ cls: "ink-penmode-x" });
+		setIcon(x, "x");
+		b.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); this.engine.exitPenMode(); });
+		this.engine.penOnly = () => live.settings.penMode;
+		this.engine.onPenModeChange = (on) => this.penChip.toggleClass("is-hidden", !on);
+	}
+
 	private touchAction!: HTMLElement;
 	private toggleTouch() {
 		const on = this.engine.touchDraws = !this.engine.touchDraws;
+		if (on) this.engine.exitPenMode();
 		this.touchAction.toggleClass("is-active", on);
 		setIcon(this.touchAction, on ? "pointer" : "hand-metal");
 		this.touchAction.setAttribute("aria-label", on ? "Touch draws: tap to turn the palm guard back on" : "Palm guard on: only the pen draws (tap to let touch draw)");
