@@ -233,7 +233,8 @@ export class InkEngine {
 
 	/**
 	 * Stress test with real ink: copy the drawing's current ink (as written, with whatever smoothness switches were on)
-	 * onto new pages in a grid until the drawing holds `total` strokes. Link boxes are not copied.
+	 * onto new pages in a grid until the drawing holds `total` strokes. Link boxes are not copied. Copies go right of and
+	 * below everything already there, so running it again stacks (a 100k drawing copies its first 100k strokes beside itself).
 	 * Returns the number of strokes added (0 if there was no ink to copy).
 	 */
 	cloneInkTo(total: number) {

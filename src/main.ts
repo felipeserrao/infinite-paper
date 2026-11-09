@@ -203,14 +203,14 @@ export default class InfinitePaperPlugin extends Plugin {
 
 		this.addCommand({
 			id: "dev-clone-ink-100k",
-			name: "Dev: copy this drawing's ink until it has 100k strokes",
+			name: "Dev: add 100k more strokes, copied from this drawing's ink (stacks each run)",
 			checkCallback: (checking) => {
 				const v = this.app.workspace.getActiveViewOfType(InkView);
 				if (!this.settings.devMode || !v) return false;
 				if (!checking) {
 					const t0 = performance.now();
-					const added = v.engine.cloneInkTo(100000);
-					if (!added) { new Notice(v.engine.store.strokes.size ? "Already 100k strokes or more" : "Write some ink first: it is what gets copied"); return true; }
+					const added = v.engine.cloneInkTo(v.engine.store.strokes.size + 100000);
+					if (!added) { new Notice("Write some ink first: it is what gets copied"); return true; }
 					v.togglePerf(true);
 					new Notice(`Now ${v.engine.store.strokes.size.toLocaleString()} strokes (+${added.toLocaleString()} copied in ${(performance.now() - t0).toFixed(0)} ms)`);
 				}
