@@ -18,8 +18,8 @@ const MIN_ZOOM = 0.03, MAX_ZOOM = 6;
 const ZOOM_IDLE_MS = 140;
 /** two-finger gesture thresholds, in screen px (tldraw's): spread to start zooming, midpoint travel to start panning, spread to turn a pan into a zoom */
 const PINCH_ZOOM_PX = 24, PINCH_PAN_PX = 16, PAN_TO_ZOOM_PX = 64;
-/** palm guards for finger panning: a one-finger pan starts after this many screen px; touches this soon after the pen are ignored; contacts wider than this (px) are a palm */
-const PAN_START_PX = 10, PALM_COOLDOWN_MS = 500, PALM_CONTACT_PX = 44;
+/** palm guards for finger panning: a one-finger pan starts after this many screen px; touches this soon after the pen are ignored */
+const PAN_START_PX = 10, PALM_COOLDOWN_MS = 500;
 const FRAME_BUDGET_MS = 7;
 
 class Ring {
@@ -619,9 +619,9 @@ export class InkEngine {
 		if (isTouch) {
 			if (this.drawPointer !== null && this.drawPointerType !== "touch") return; // palm guard
 			if (!this.touchDraws) {
-				// a palm landing as the pen lifts between words, or a contact wider than a fingertip, never moves the page
+				// a palm landing as the pen lifts between words never moves the page
+				// (no contact-size check: on iPad a fingertip can report as wide as a palm, which blocked all panning)
 				if (performance.now() - this.lastPenAt < PALM_COOLDOWN_MS) return;
-				if (Math.max(e.width || 0, e.height || 0) > PALM_CONTACT_PX) return;
 			}
 			this.tap = this.touches.size === 0 ? { id: e.pointerId, x, y, t: performance.now() } : null;
 			this.touches.set(e.pointerId, { x, y });
