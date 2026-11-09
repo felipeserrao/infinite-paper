@@ -16,6 +16,8 @@ type UndoEntry =
 
 const MIN_ZOOM = 0.03, MAX_ZOOM = 6;
 const ZOOM_IDLE_MS = 140;
+/** two-finger gesture thresholds, in screen px (tldraw's): spread to start zooming, midpoint travel to start panning, spread to turn a pan into a zoom */
+const PINCH_ZOOM_PX = 24, PINCH_PAN_PX = 16, PAN_TO_ZOOM_PX = 64;
 const FRAME_BUDGET_MS = 7;
 
 class Ring {
@@ -69,7 +71,11 @@ export class InkEngine {
 	private drawPointer: number | null = null;
 	private drawPointerType = "";
 	private touches = new Map<number, { x: number; y: number }>();
-	private gesture: null | { kind: "pan" | "pinch"; sx: number; sy: number; d: number; cam: Camera; wx: number; wy: number } = null;
+	/**
+	 * Touch gesture. Two fingers start "unsure" and become a pan or a zoom (tldraw's rule): a drag pans with
+	 * the zoom held still, so fingers drifting apart while scrolling don't zoom. sx/sy: start midpoint; d: start spread.
+	 */
+	private gesture: null | { kind: "pan" | "pinch"; mode: "unsure" | "pan" | "zoom"; sx: number; sy: number; d: number; cam: Camera; wx: number; wy: number } = null;
 	private mousePan: null | { id: number; x: number; y: number; cam: Camera } = null;
 	/** one-finger touch that may turn out to be a tap (opens a link box) */
 	private tap: null | { id: number; x: number; y: number; t: number } = null;
@@ -608,7 +614,8 @@ export class InkEngine {
 		const sy = pts.reduce((a, p) => a + p.y, 0) / pts.length;
 		const d = pts.length >= 2 ? Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) : 0;
 		const [wx, wy] = this.toWorld(sx, sy);
-		this.gesture = { kind: pts.length >= 2 ? "pinch" : "pan", sx, sy, d, cam: { ...this.cam }, wx, wy };
+		const kind = pts.length >= 2 ? "pinch" : "pan";
+		this.gesture = { kind, mode: kind === "pan" ? "pan" : "unsure", sx, sy, d, cam: { ...this.cam }, wx, wy };
 	}
 
 	private onMove(e: PointerEvent) {
@@ -646,14 +653,25 @@ export class InkEngine {
 		const sx = pts.reduce((a, p) => a + p.x, 0) / pts.length;
 		const sy = pts.reduce((a, p) => a + p.y, 0) / pts.length;
 		let z = g.cam.z;
-		if (g.kind === "pinch" && pts.length >= 2 && g.d > 0 && !this.zoomLocked && !this.panMode) {
+		if (g.kind === "pinch" && pts.length >= 2 && g.d > 0) {
 			const d = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
-			z = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, g.cam.z * (d / g.d)));
+			const canZoom = !this.zoomLocked && !this.panMode;
+			const spread = Math.abs(d - g.d);
+			if (g.mode === "unsure") {
+				if (canZoom && spread > PINCH_ZOOM_PX) g.mode = "zoom";
+				else if (Math.hypot(sx - g.sx, sy - g.sy) > PINCH_PAN_PX) g.mode = "pan";
+				else return; // not decided yet: the view holds still
+			} else if (g.mode === "pan" && canZoom && spread > PAN_TO_ZOOM_PX) {
+				// a deliberate pinch during a pan: zoom from here, without a jump
+				g.mode = "zoom"; g.cam = { ...this.cam }; g.d = d;
+				[g.wx, g.wy] = this.toWorld(sx, sy);
+			}
+			if (g.mode === "zoom" && canZoom) z = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, g.cam.z * (d / g.d)));
 		}
 		this.cam.z = z;
 		this.cam.x = sx - g.wx * z;
 		this.cam.y = sy - g.wy * z;
-		this.camChanged(g.kind === "pinch");
+		this.camChanged(g.mode === "zoom");
 	}
 
 	private onUp(e: PointerEvent, cancelled: boolean) {
