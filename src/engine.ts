@@ -231,6 +231,37 @@ export class InkEngine {
 		this.requestFrame();
 	}
 
+	/**
+	 * Stress test with real ink: copy the drawing's current ink (as written, with whatever smoothness switches were on)
+	 * onto new pages in a grid until the drawing holds `total` strokes. Link boxes are not copied.
+	 * Returns the number of strokes added (0 if there was no ink to copy).
+	 */
+	cloneInkTo(total: number) {
+		const src = [...this.store.strokes.values()].filter((s) => !s.link);
+		if (!src.length) return 0;
+		let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+		for (const s of src) { x0 = Math.min(x0, s.bbox.x0); y0 = Math.min(y0, s.bbox.y0); x1 = Math.max(x1, s.bbox.x1); y1 = Math.max(y1, s.bbox.y1); }
+		const w = x1 - x0 + 200, h = y1 - y0 + 200, COLS = 6;
+		let added = 0;
+		for (let copy = 1; this.store.strokes.size < total; copy++) {
+			const dx = (copy % COLS) * w, dy = Math.floor(copy / COLS) * h;
+			for (const s of src) {
+				if (this.store.strokes.size >= total) break;
+				const p = new Float32Array(s.pts.length);
+				for (let i = 0; i < p.length; i += 2) { p[i] = s.pts[i] + dx; p[i + 1] = s.pts[i + 1] + dy; }
+				const n = this.store.create(s.color, s.size, p);
+				if (s.smooth) n.smooth = true;
+				this.store.add(n);
+				added++;
+			}
+		}
+		this.tiles.clear();
+		this.undoStack = []; this.redoStack = [];
+		this.requestFrame();
+		this.onChange();
+		return added;
+	}
+
 	/** bulk insert (synthetic test) */
 	addMany(strokes: { color: string; size: number; pts: Float32Array }[]) {
 		for (const s of strokes) this.store.add(this.store.create(s.color, s.size, s.pts));
