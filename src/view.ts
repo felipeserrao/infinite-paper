@@ -8,6 +8,9 @@ import { live } from "./settings";
 import { importTldraw, isTldrawMarkdown } from "./tldraw-import";
 import type InfinitePaperPlugin from "./main";
 
+/** one tap of "Make bigger" (and its inverse for "Make smaller") */
+const SCALE_STEP = 1.25;
+
 export const VIEW_TYPE = "infinite-paper";
 
 /** `[[a/b|alias]]` -> `a/b` */
@@ -713,6 +716,11 @@ export class InkView extends TextFileView {
 			};
 			btn("folder-input", "Move…", "Move the selection to another drawing", transfer("move"));
 			btn("copy", "Copy…", "Copy the selection to another drawing", transfer("copy"));
+		}
+		if (box || this.engine.selection.length) {
+			// tap repeatedly to step the size: as if the ink had been written at another zoom
+			btn("a-arrow-down", null, "Make smaller", () => { if (!this.engine.scaleSelection(1 / SCALE_STEP)) new Notice("A link box can't get any smaller"); });
+			btn("a-arrow-up", null, "Make bigger", () => this.engine.scaleSelection(SCALE_STEP));
 		}
 		btn("trash-2", null, box ? "Delete the box and the ink inside it" : "Delete selection", () => this.deleteSelection());
 		this.updateOverlays();
