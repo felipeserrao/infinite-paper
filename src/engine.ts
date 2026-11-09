@@ -109,8 +109,6 @@ export class InkEngine {
 	private moving: null | { sx: number; sy: number; dx: number; dy: number } = null;
 	/** dragging a selected link box's corner handle: (ax, ay) is the fixed top-left corner */
 	private resizing: null | { box: Stroke; ax: number; ay: number; x: number; y: number; ghost: Stroke } = null;
-	/** dragging an ink selection's corner handle: scale k about the selection's top-left (ax, ay); strokes ride the overlay */
-	private scaling: null | { ax: number; ay: number; w: number; h: number; k: number; box: Rect } = null;
 
 	// frame loop
 	private raf = 0;
@@ -451,7 +449,7 @@ export class InkEngine {
 		return { x0: (b.x0 + dx) * z + this.cam.x, y0: (b.y0 + dy) * z + this.cam.y, x1: (b.x1 + dx) * z + this.cam.x, y1: (b.y1 + dy) * z + this.cam.y };
 	}
 
-	isMovingSelection() { return !!this.moving || !!this.scaling; }
+	isMovingSelection() { return !!this.moving; }
 
 	zoomBy(f: number) { this.setZoom(this.cam.z * f); }
 
@@ -480,17 +478,10 @@ export class InkEngine {
 			for (const s of this.selection) paintStroke(ctx, s);
 		}
 		if (this.resizing) { this.setWorldTransform(ctx); paintStroke(ctx, this.resizing.ghost); }
-		if (this.scaling) {
-			// the lifted ink drawn through a scale about the anchor: width scales with it, as if written at another zoom
-			const sc = this.scaling;
-			this.setWorldTransform(ctx);
-			ctx.translate(sc.ax, sc.ay); ctx.scale(sc.k, sc.k); ctx.translate(-sc.ax, -sc.ay);
-			for (const s of this.selection) paintStroke(ctx, s);
-		}
 		const lb = this.selectedLinkBox();
-		{
-			// resize handle: bottom-right corner of the box (link box: its rectangle; ink: the selection box)
-			const r = this.resizing ? { x1: this.resizing.x, y1: this.resizing.y } : lb ? rectOf(lb) : this.selBox;
+		if (lb) {
+			// resize handle: bottom-right corner of the box (ink selections have none: it got in the way of moving)
+			const r = this.resizing ? { x1: this.resizing.x, y1: this.resizing.y } : rectOf(lb);
 			const hx = (r.x1 + dx) * this.cam.z + this.cam.x, hy = (r.y1 + dy) * this.cam.z + this.cam.y;
 			ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
 			ctx.beginPath(); ctx.arc(hx, hy, 9, 0, Math.PI * 2);
@@ -805,7 +796,6 @@ export class InkEngine {
 		if (this.tool !== "eraser" && this.selection.length && this.selBox) {
 			const box = this.selectedLinkBox();
 			if (box && this.onHandle(box, x, y)) { this.beginResize(box); return; }
-			if (!box && this.onSelHandle(x, y)) { this.beginScale(); return; }
 			const b = this.selBox;
 			if (wx >= b.x0 && wx <= b.x1 && wy >= b.y0 && wy <= b.y1) { this.beginMove(wx, wy); return; }
 			this.clearSelection();
@@ -836,14 +826,6 @@ export class InkEngine {
 			this.selBox = r.ghost.bbox;
 			return;
 		}
-		if (this.scaling) {
-			// uniform scale: project the pen onto the box diagonal
-			const sc = this.scaling, w = sc.w, h = sc.h;
-			const k = ((wx - sc.ax) * w + (wy - sc.ay) * h) / (w * w + h * h);
-			sc.k = Math.max(MIN_SCALE_PX / (Math.max(w, h) * this.cam.z), k);
-			this.selBox = { x0: sc.ax, y0: sc.ay, x1: sc.ax + w * sc.k, y1: sc.ay + h * sc.k };
-			return;
-		}
 		if (this.moving) { this.moving.dx = wx - this.moving.sx; this.moving.dy = wy - this.moving.sy; return; }
 		if (this.tool === "pen") {
 			// on a link box: ink starts only once the pen really moves (writing inside a box still works)
@@ -871,7 +853,7 @@ export class InkEngine {
 	private lastRecorded: [number, number] = [0, 0];
 
 	private drawMoveEnd() {
-		if (this.moving || this.resizing || this.scaling) this.drawOverlay();
+		if (this.moving || this.resizing) this.drawOverlay();
 		else if (this.tool === "pen") { if (!this.penTap) this.scheduleLive(); }
 		else if (this.tool === "lasso") this.drawLasso();
 	}
@@ -879,7 +861,7 @@ export class InkEngine {
 	private cancelDraw() {
 		this.onWriting(false);
 		this.penTap = null;
-		if (this.tool === "eraser" || this.moving || this.resizing || this.scaling) this.endDraw();
+		if (this.tool === "eraser" || this.moving || this.resizing) this.endDraw();
 		this.drawPointer = null; this.drawPointerType = "";
 		this.livePts = []; this.lassoPts = [];
 		this.clearLive();
@@ -890,7 +872,6 @@ export class InkEngine {
 		this.onWriting(false);
 		this.drawPointer = null; this.drawPointerType = "";
 		if (this.resizing) { this.endResize(); return; }
-		if (this.scaling) { this.endScale(); return; }
 		if (this.moving) { this.endMove(); return; }
 		if (tool === "pen") {
 			window.cancelAnimationFrame(this.liveRaf); this.liveRaf = 0;
@@ -945,7 +926,7 @@ export class InkEngine {
 		}
 		this.compose(false); this.requestFrame();
 		this.onChange(); this.onEdit();
-		if (!this.moving && !this.resizing && !this.scaling && strokes.some((s) => s.link)) this.onLinksChanged([]);
+		if (!this.moving && !this.resizing && strokes.some((s) => s.link)) this.onLinksChanged([]);
 	}
 
 	private removeStrokes(strokes: Stroke[]) {
@@ -1169,32 +1150,6 @@ export class InkEngine {
 		this.selectLink(nb);
 	}
 
-	/** screen point near the ink selection's corner handle (bottom-right of the selection box) */
-	private onSelHandle(sx: number, sy: number) {
-		const b = this.selBox;
-		return !!b && Math.hypot(b.x1 * this.cam.z + this.cam.x - sx, b.y1 * this.cam.z + this.cam.y - sy) <= 24;
-	}
-
-	private beginScale() {
-		const b = this.selBox!;
-		this.scaling = { ax: b.x0, ay: b.y0, w: Math.max(1, b.x1 - b.x0), h: Math.max(1, b.y1 - b.y0), k: 1, box: b };
-		// lift strokes off the tiles; they ride on the overlay while dragging
-		for (const s of this.selection) this.store.remove(s);
-		this.crisp.valid = false; this.crisp.job = null; this.crisp.changedAt = 0;
-		this.tiles.invalidate(b, this.isTileVisible);
-		this.compose(false);
-		this.drawOverlay();
-	}
-
-	private endScale() {
-		const sc = this.scaling!;
-		this.scaling = null;
-		const sel = this.selection;
-		// put the originals back, then scale them as one undo step
-		this.addStrokes(sel);
-		if (Math.abs(sc.k - 1) < 0.01 || !this.scaleStrokes(sel, sc.k, sc.ax, sc.ay)) this.setSelection(sel);
-	}
-
 	/** "make smaller / bigger": scale the selection about its top-left corner, as if written at another zoom (undoable) */
 	scaleSelection(k: number): boolean {
 		const b = this.selBox;
@@ -1373,8 +1328,6 @@ export class InkEngine {
 }
 
 const MIN_LINK = 80;
-/** an ink selection can't be dragged smaller than this many screen px across */
-const MIN_SCALE_PX = 12;
 
 /** a link box's rectangle (its two stored corners, in any order) */
 function rectOf(s: Stroke): Rect {
