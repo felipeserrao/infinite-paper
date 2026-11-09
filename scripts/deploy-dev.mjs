@@ -12,7 +12,8 @@
 //
 // Usage:
 //   node scripts/deploy-dev.mjs <plugin folder> --part "<goal>[:<who>]" [--part …] [--log <file.md>]
-//                               [--dry-run] [--no-build]
+//                               [--dry-run] [--no-build] [--any-branch]
+//   Refuses to run outside the "dev" branch unless --any-branch is given.
 //   <plugin folder> can also come from INFINITE_PAPER_PLUGIN_DIR.
 //   --log appends one line per build to a markdown file.
 import { execSync } from "node:child_process";
@@ -56,6 +57,9 @@ const now = new Date(), pad = (x) => String(x).padStart(2, "0");
 const date = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
 const branch = sh("git rev-parse --abbrev-ref HEAD"), commit = sh("git rev-parse --short HEAD");
 const dirty = sh("git status --porcelain --untracked-files=no") !== "";
+if (branch !== "dev" && !flag("--any-branch")) {
+	throw new Error(`test builds come from the dev branch (this is "${branch}"): merge your work into dev and deploy from there, see the project's CLAUDE.md. Use --any-branch to override.`);
+}
 const build = { n, version, date, parts, branch, commit, dirty };
 
 if (flag("--dry-run")) { console.log(JSON.stringify(build, null, 2)); process.exit(0); }
