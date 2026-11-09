@@ -126,6 +126,7 @@ export class InkView extends TextFileView {
 
 	setViewData(data: string, clear: boolean): void {
 		this.loading = true;
+		if (clear && this.perfEl) this.togglePerf(false); // another file opened in this tab: the overlay belonged to the last one
 		this.tldraw = null;
 		this.unreadable = null;
 		try {
