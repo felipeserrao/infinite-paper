@@ -600,6 +600,10 @@ export class InkEngine {
 
 	private onDown(e: PointerEvent) {
 		e.preventDefault();
+		// preventDefault stops the mousedown Obsidian's menus listen for to close on an outside click:
+		// with a menu open, this tap closes it (and draws nothing), like a click anywhere else
+		const menu = this.root.doc.body.querySelector(".menu");
+		if (menu) { this.live.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 })); return; }
 		const [x, y] = this.local(e);
 		const isTouch = e.pointerType === "touch";
 		this.lastPointer = [x, y];
