@@ -29,6 +29,8 @@ export interface InkSettings {
 	devMode: boolean;
 	/** shape of each line in a drawing's link list; {{link}} is replaced by [[target]] */
 	linkLineTemplate: string;
+	/** save new strokes as their smoothed, simplified line: much smaller files, ink within about 1 px */
+	compactInk: boolean;
 }
 
 export const DEFAULT_SETTINGS: InkSettings = {
@@ -42,6 +44,7 @@ export const DEFAULT_SETTINGS: InkSettings = {
 	openTldrawInInk: false,
 	devMode: false,
 	linkLineTemplate: "- {{link}}",
+	compactInk: false,
 };
 
 /** the plugin's current settings, for code (like the view) that has no handle on the plugin */
@@ -143,6 +146,12 @@ export class InkSettingTab extends PluginSettingTab {
 				const n = Number(v);
 				if (n >= 5 && n <= 800) { s.preferredZoom = n; await save(); }
 			}));
+
+		new Setting(el).setName("File size").setHeading();
+		new Setting(el)
+			.setName("Compact ink")
+			.setDesc("Saves each new stroke as the smooth line you see instead of every point the pen reported. Drawings take about 40–60% less space; the ink can differ by up to about 1 px when zoomed in. Strokes already drawn are not changed: use the command \"Compact all ink in this drawing\" for them.")
+			.addToggle((t) => t.setValue(s.compactInk).onChange(async (v) => { s.compactInk = v; await save(); }));
 
 		new Setting(el).setName("Advanced").setHeading();
 		new Setting(el)

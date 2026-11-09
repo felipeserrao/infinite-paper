@@ -1,4 +1,5 @@
-import { Store, Stroke, Rect, LinkInfo, LINK_BOX, LINK_BORDER, computeBBox, centerlinePath, hitStroke, outlineToPath, paintStroke, pointInPoly, strokeOutline, tailLag } from "./store";
+import { Store, Stroke, Rect, LinkInfo, LINK_BOX, LINK_BORDER, compactPoints, computeBBox, centerlinePath, hitStroke, outlineToPath, paintStroke, pointInPoly, strokeOutline, tailLag } from "./store";
+import { live } from "./settings";
 import { exp } from "./exp";
 import { TileCache, Tile, TILE, MIN_LEVEL, MAX_LEVEL, tileWorldSize } from "./tiles";
 
@@ -807,7 +808,11 @@ export class InkEngine {
 				return;
 			}
 			if (this.livePts.length >= 2) {
-				const s = this.store.create(this.color, this.size, new Float32Array(this.livePts));
+				const raw = new Float32Array(this.livePts);
+				// compact ink: keep the smoothed, simplified line instead of every pen sample
+				const s = live.settings.compactInk
+					? Object.assign(this.store.create(this.color, this.size, compactPoints(raw, this.size)), { smooth: true })
+					: this.store.create(this.color, this.size, raw);
 				this.lastPenStroke = s;
 				try { this.addStrokes([s]); } finally { this.lastPenStroke = null; }
 				this.push({ type: "add", strokes: [s] });
@@ -963,11 +968,27 @@ export class InkEngine {
 		const out = strokes.map((s) => {
 			const p = new Float32Array(s.pts.length);
 			for (let i = 0; i < p.length; i += 2) { p[i] = s.pts[i] + dx; p[i + 1] = s.pts[i + 1] + dy; }
-			return this.store.create(s.color, s.size, p, s.link && { ...s.link });
+			const n = this.store.create(s.color, s.size, p, s.link && { ...s.link });
+			if (s.smooth) n.smooth = true;
+			return n;
 		});
 		this.addStrokes(out);
 		this.push({ type: "add", strokes: out });
 		return out;
+	}
+
+	/** compact ink for every stroke not compact yet (one undo step); returns how many were changed */
+	compactAll(): number {
+		const old = [...this.store.strokes.values()].filter((s) => !s.link && !s.smooth).sort((a, b) => a.id - b.id);
+		if (!old.length) return 0;
+		this.clearSelection();
+		const added = old.map((s) => Object.assign(this.store.create(s.color, s.size, compactPoints(s.pts, s.size)), { smooth: true }));
+		this.removeStrokes(old);
+		this.addStrokes(added);
+		this.push({ type: "swap", removed: old, added });
+		this.tiles.clear();
+		this.requestFrame();
+		return old.length;
 	}
 
 	/** the topmost link box under a screen point, or null */

@@ -122,6 +122,19 @@ export default class InfinitePaperPlugin extends Plugin {
 		});
 		this.addCommand({ id: "new-drawing", name: "New drawing", callback: () => this.newDrawing() });
 		this.addCommand({
+			id: "compact-all-ink",
+			name: "Compact all ink in this drawing",
+			checkCallback: (checking) => {
+				const v = this.app.workspace.getActiveViewOfType(InkView);
+				if (!v || v.isReadOnlyTldraw()) return false;
+				if (!checking) {
+					const n = v.engine.compactAll();
+					new Notice(n ? `Compacted ${n} stroke${n === 1 ? "" : "s"}. Undo brings them back as they were.` : "All ink in this drawing is already compact.");
+				}
+				return true;
+			},
+		});
+		this.addCommand({
 			id: "insert-link-to-note",
 			name: "Insert link to note",
 			checkCallback: (checking) => {

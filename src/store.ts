@@ -19,6 +19,8 @@ export interface Stroke {
 	enc?: Uint8Array;
 	/** which saved chunk this stroke belongs to (assigned on first save) */
 	chunk?: number;
+	/** compact ink: pts are already smoothed and simplified (drawn without streamline, saved at 1 px) */
+	smooth?: boolean;
 	/** query dedupe stamp */
 	stamp: number;
 	/** a link box instead of ink: pts = two opposite corners, size = border width */
@@ -42,11 +44,11 @@ export const LINK_BORDER = 3.5;
 const LINK_FONT = 24;
 
 // tldraw's pen settings with pressure off (solidRealPressureSettings).
-export function freehandOptions(size: number, last: boolean) {
+export function freehandOptions(size: number, last: boolean, smooth = false) {
 	return {
 		size,
 		thinning: 0,
-		streamline: exp.streamline,
+		streamline: smooth ? 0 : exp.streamline,
 		smoothing: 0.62,
 		simulatePressure: false,
 		last,
@@ -67,6 +69,50 @@ export function outlineToPath(outline: number[][]): Path2D {
 	return p;
 }
 
+function rawInput(pts: ArrayLike<number>): number[][] {
+	const input: number[][] = [];
+	for (let i = 0; i < pts.length; i += 2) input.push([pts[i], pts[i + 1], 0.5]);
+	return input;
+}
+
+function rawPoints(pts: ArrayLike<number>): number[][] {
+	const out: number[][] = [];
+	for (let i = 0; i < pts.length; i += 2) out.push([pts[i], pts[i + 1]]);
+	return out;
+}
+
+/** compact ink: points within this distance (world units) of the smoothed line are dropped */
+export const COMPACT_TOLERANCE = 0.5;
+
+function simplify(p: number[][], e: number): number[][] {
+	if (p.length < 3) return p;
+	const a = p[0], b = p[p.length - 1], dx = b[0] - a[0], dy = b[1] - a[1], L = Math.hypot(dx, dy);
+	let dm = 0, k = 0;
+	for (let i = 1; i < p.length - 1; i++) {
+		const d = L ? Math.abs(dy * (p[i][0] - a[0]) - dx * (p[i][1] - a[1])) / L : Math.hypot(p[i][0] - a[0], p[i][1] - a[1]);
+		if (d > dm) { dm = d; k = i; }
+	}
+	return dm > e ? simplify(p.slice(0, k + 1), e).slice(0, -1).concat(simplify(p.slice(k), e)) : [a, b];
+}
+
+/**
+ * Compact ink: the stroke's smoothed line (what is drawn on screen), points within COMPACT_TOLERANCE of it
+ * dropped, rounded to whole units. Drawn with streamline off, it looks the same within about 1 px.
+ */
+export function compactPoints(pts: ArrayLike<number>, size: number): Float32Array {
+	const P = getStrokePoints(toInput(pts, size), freehandOptions(size, true)).map((p) => p.point);
+	if (!P.length) return Float32Array.from(pts);
+	const S = simplify(P, COMPACT_TOLERANCE);
+	const out: number[] = [];
+	for (const [x, y] of S) {
+		const rx = Math.round(x), ry = Math.round(y);
+		if (out.length && out[out.length - 2] === rx && out[out.length - 1] === ry) continue;
+		out.push(rx, ry);
+	}
+	if (out.length === 2) out.push(out[0], out[1]); // a dot keeps two points
+	return Float32Array.from(out);
+}
+
 /** world points -> perfect-freehand input; with exp.tlFilter, strip start/end points within size/3 like tldraw's freehand */
 function toInput(pts: ArrayLike<number>, size: number): number[][] {
 	const input: number[][] = [];
@@ -79,8 +125,8 @@ function toInput(pts: ArrayLike<number>, size: number): number[][] {
 	return input;
 }
 
-export function strokeOutline(pts: ArrayLike<number>, size: number, last: boolean): number[][] {
-	return getStroke(toInput(pts, size), freehandOptions(size, last));
+export function strokeOutline(pts: ArrayLike<number>, size: number, last: boolean, smooth = false): number[][] {
+	return getStroke(smooth ? rawInput(pts) : toInput(pts, size), freehandOptions(size, last, smooth));
 }
 
 /**
@@ -120,8 +166,8 @@ export function tlStrokePoints(pts: ArrayLike<number>, size: number, streamline:
 
 /** round-pen centerline (switch 5). Points: perfect-freehand, or tldraw's with switch 8. Curves: through the
  *  midpoints with each sample point as control, or tldraw's mirrored controls with switch 9. */
-export function centerlinePath(pts: ArrayLike<number>, size: number, last: boolean): Path2D {
-	const P = exp.tlPoints
+export function centerlinePath(pts: ArrayLike<number>, size: number, last: boolean, smooth = false): Path2D {
+	const P = smooth ? rawPoints(pts) : exp.tlPoints
 		? tlStrokePoints(pts, size, exp.streamline, last, exp.tlFilter)
 		: getStrokePoints(toInput(pts, size), freehandOptions(size, last)).map((p) => p.point);
 	const path = new Path2D();
@@ -160,7 +206,7 @@ export function tailLag(pts: ArrayLike<number>, size: number): number {
 }
 
 export function getPath(s: Stroke): Path2D {
-	if (!s.path) s.path = outlineToPath(strokeOutline(s.pts, s.size, true));
+	if (!s.path) s.path = outlineToPath(strokeOutline(s.pts, s.size, true, s.smooth));
 	return s.path;
 }
 
@@ -168,7 +214,7 @@ export function getPath(s: Stroke): Path2D {
 export function paintStroke(ctx: CanvasRenderingContext2D, s: Stroke) {
 	if (s.link) { paintLink(ctx, s); return; }
 	if (exp.centerline) {
-		if (!s.cpath) s.cpath = centerlinePath(s.pts, s.size, true);
+		if (!s.cpath) s.cpath = centerlinePath(s.pts, s.size, true, s.smooth);
 		ctx.strokeStyle = s.color; ctx.lineWidth = s.size; ctx.lineCap = "round"; ctx.lineJoin = "round";
 		ctx.stroke(s.cpath);
 	} else {
@@ -262,18 +308,27 @@ function readU(b: Uint8Array, at: { i: number }): number {
 	}
 }
 
-export function encodePointBytes(pts: Float32Array): Uint8Array {
+/** units per world unit when saving: 4 (1/4 px), or 1 for compact ink */
+export function quantOf(s: { smooth?: boolean }) { return s.smooth ? 1 : Q; }
+
+/** zigzag varint */
+function readS(b: Uint8Array, at: { i: number }): number {
+	const z = readU(b, at);
+	return z % 2 === 0 ? z / 2 : -(z + 1) / 2;
+}
+
+export function encodePointBytes(pts: Float32Array, q = Q): Uint8Array {
 	const out: number[] = [];
 	let px = 0, py = 0;
 	for (let i = 0; i < pts.length; i += 2) {
-		const qx = Math.round(pts[i] * Q), qy = Math.round(pts[i + 1] * Q);
+		const qx = Math.round(pts[i] * q), qy = Math.round(pts[i + 1] * q);
 		writeVar(out, qx - px); writeVar(out, qy - py);
 		px = qx; py = qy;
 	}
 	return Uint8Array.from(out);
 }
 
-export function decodePointBytes(bin: Uint8Array, start = 0, end = bin.length): Float32Array {
+export function decodePointBytes(bin: Uint8Array, start = 0, end = bin.length, q = Q, sx = 0, sy = 0): Float32Array {
 	const vals: number[] = [];
 	let z = 0, mul = 1;
 	for (let i = start; i < end; i++) {
@@ -284,10 +339,10 @@ export function decodePointBytes(bin: Uint8Array, start = 0, end = bin.length): 
 		z = 0; mul = 1;
 	}
 	const pts = new Float32Array(vals.length);
-	let px = 0, py = 0;
+	let px = sx, py = sy;
 	for (let i = 0; i + 1 < vals.length; i += 2) {
 		px += vals[i]; py += vals[i + 1];
-		pts[i] = px / Q; pts[i + 1] = py / Q;
+		pts[i] = px / q; pts[i + 1] = py / q;
 	}
 	return pts;
 }
@@ -311,60 +366,85 @@ export function decodePoints(b64: string): Float32Array { return decodePointByte
 // ---------- chunks (version 2) ----------
 /**
  * Strokes are saved in chunks of up to CHUNK strokes. A chunk is one line:
- *   {"s":[[color,size],...],"l":[{"link":..,"label":..,"frame":1}],"d":"<base64 of deflated binary>"}
+ *   {"s":[[color,size(,1)],...],"l":[{"link":..,"label":..,"frame":1}],"r":1,"d":"<base64 of deflated binary>"}
  * binary, per stroke: varint style index, varint link (0 = ink, k = l[k-1]), varint byte length, point varints.
+ * A style with a third element 1 is compact ink (points smoothed, in whole units). With "r":1 (data version 3)
+ * each stroke's first point is relative to the previous stroke's last point; without it, absolute.
  * A chunk only depends on its own strokes, so a save re-compresses only the chunks that changed.
  */
 export const CHUNK = 2000;
 
 type LinkRow = { link: string; label: string; frame?: number };
-interface ChunkLine { s: [string, number][]; l?: LinkRow[]; d: string }
+interface ChunkLine { s: ([string, number] | [string, number, number])[]; l?: LinkRow[]; r?: number; d: string }
 
 function linkRow(l: LinkInfo): LinkRow { return l.frame ? { link: l.target, label: l.label, frame: 1 } : { link: l.target, label: l.label }; }
 
 export function encodeChunk(strokes: Stroke[]): string {
-	const styles: [string, number][] = [], styleIx = new Map<string, number>(), links: LinkRow[] = [];
+	const styles: ([string, number] | [string, number, number])[] = [], styleIx = new Map<string, number>(), links: LinkRow[] = [];
 	const out: number[] = [];
 	const parts: Uint8Array[] = [];
+	// end of the previous stroke, in world units as saved (so the decoder computes the same thing)
+	let ex = 0, ey = 0;
 	for (const s of strokes) {
-		const key = s.color + "|" + s.size;
+		const q = quantOf(s);
+		const key = s.color + "|" + s.size + (s.smooth ? "|c" : "");
 		let si = styleIx.get(key);
-		if (si === undefined) { si = styles.length; styles.push([s.color, s.size]); styleIx.set(key, si); }
-		if (!s.enc) s.enc = encodePointBytes(s.pts);
+		if (si === undefined) { si = styles.length; styles.push(s.smooth ? [s.color, s.size, 1] : [s.color, s.size]); styleIx.set(key, si); }
+		if (!s.enc) s.enc = encodePointBytes(s.pts, q);
+		// first point relative to the previous stroke's end
+		const at = { i: 0 };
+		const x0 = readS(s.enc, at), y0 = readS(s.enc, at);
+		const head: number[] = [];
+		writeVar(head, x0 - Math.round(ex * q)); writeVar(head, y0 - Math.round(ey * q));
+		const rest = s.enc.subarray(at.i);
 		writeU(out, si);
 		if (s.link) { links.push(linkRow(s.link)); writeU(out, links.length); } else writeU(out, 0);
-		writeU(out, s.enc.length);
+		writeU(out, head.length + rest.length);
+		for (const v of head) out.push(v);
 		parts.push(Uint8Array.from(out)); out.length = 0;
-		parts.push(s.enc);
+		parts.push(rest);
+		const n = s.pts.length;
+		if (n >= 2) { ex = Math.round(s.pts[n - 2] * q) / q; ey = Math.round(s.pts[n - 1] * q) / q; }
 	}
 	let n = 0; for (const p of parts) n += p.length;
 	const bin = new Uint8Array(n); n = 0;
 	for (const p of parts) { bin.set(p, n); n += p.length; }
 	const line: ChunkLine = { s: styles, d: "" };
 	if (links.length) line.l = links;
-	const head = JSON.stringify(line);
-	return head.slice(0, -3) + JSON.stringify(toB64(deflateSync(bin, { level: 9 }))) + "}";
+	line.r = 1;
+	const head = JSON.stringify({ ...line, d: undefined });
+	return head.slice(0, -1) + ',"d":' + JSON.stringify(toB64(deflateSync(bin, { level: 9 }))) + "}";
 }
 
-export function decodeChunk(line: ChunkLine, add: (color: string, size: number, pts: Float32Array, enc: Uint8Array, link?: LinkInfo) => void) {
+export function decodeChunk(line: ChunkLine, add: (color: string, size: number, pts: Float32Array, enc: Uint8Array, link: LinkInfo | undefined, smooth: boolean) => void) {
 	const bin = inflateSync(fromB64(line.d));
 	const at = { i: 0 };
+	let ex = 0, ey = 0;
 	while (at.i < bin.length) {
-		const [color, size] = line.s[readU(bin, at)];
+		const [color, size, flag] = line.s[readU(bin, at)];
+		const smooth = flag === 1, q = smooth ? 1 : Q;
 		const li = readU(bin, at);
 		const len = readU(bin, at);
-		const enc = bin.slice(at.i, at.i + len); at.i += len;
+		const start = at.i, end = start + len;
+		at.i = end;
 		const x = li ? line.l?.[li - 1] : undefined;
 		const link: LinkInfo | undefined = x?.link ? { target: x.link, label: x.label ?? x.link } : undefined;
 		if (link && x?.frame) link.frame = true;
-		add(color, size, decodePointBytes(enc), enc, link);
+		const rel = line.r === 1;
+		const bx = rel ? Math.round(ex * q) : 0, by = rel ? Math.round(ey * q) : 0;
+		const pts = decodePointBytes(bin, start, end, q, bx, by);
+		// the cached form is absolute (as encodePointBytes makes it)
+		const enc = rel ? encodePointBytes(pts, q) : bin.slice(start, end);
+		add(color, size, pts, enc, link, smooth);
+		const n = pts.length;
+		if (n >= 2) { ex = pts[n - 2]; ey = pts[n - 1]; }
 	}
 }
 
 /** what a chunk's saved text depends on, compared by reference */
 function chunkSig(strokes: Stroke[]): unknown[] {
 	const sig: unknown[] = [];
-	for (const s of strokes) sig.push(s, s.enc, s.color, s.size, s.link, s.link?.target, s.link?.label);
+	for (const s of strokes) sig.push(s, s.enc, s.color, s.size, s.smooth, s.link, s.link?.target, s.link?.label);
 	return sig;
 }
 
@@ -478,7 +558,7 @@ export class Store {
 		const keep = new Map<number, { sig: unknown[]; text: string }>();
 		for (const k of [...groups.keys()].sort((a, b) => a - b)) {
 			const g = groups.get(k)!;
-			for (const s of g) if (!s.enc) s.enc = encodePointBytes(s.pts);
+			for (const s of g) if (!s.enc) s.enc = encodePointBytes(s.pts, quantOf(s));
 			const sig = chunkSig(g);
 			let c = this.chunkCache.get(k);
 			if (!c || !sameSig(c.sig, sig)) c = { sig, text: encodeChunk(g) };
@@ -493,14 +573,15 @@ export class Store {
 		this.clear();
 		if (!text.trim()) return null;
 		const data = JSON.parse(text) as { strokes?: unknown[]; chunks?: ChunkLine[]; camera?: { x: number; y: number; z: number } };
-		if ((data as { version?: number }).version !== undefined && (data as { version: number }).version > 2) throw new Error("this note was saved by a newer version of Infinite Paper; update the plugin to open it");
+		if ((data as { version?: number }).version !== undefined && (data as { version: number }).version > 3) throw new Error("this note was saved by a newer version of Infinite Paper; update the plugin to open it");
 		if (!data.chunks && !Array.isArray(data.strokes)) throw new Error("no drawing data found");
 		if (data.chunks) {
 			data.chunks.forEach((line, k) => {
 				const g: Stroke[] = [];
-				decodeChunk(line, (color, size, pts, enc, link) => {
+				decodeChunk(line, (color, size, pts, enc, link, smooth) => {
 					const s = this.create(color, size, pts, link);
 					s.enc = enc; s.chunk = k;
+					if (smooth) s.smooth = true;
 					this.add(s); g.push(s);
 				});
 				// the file already holds this chunk's text (re-encoded identically on a change only)
@@ -526,6 +607,7 @@ function shifted(strokes: Stroke[], dx: number, dy: number): Stroke[] {
 		for (let i = 0; i < p.length; i += 2) { p[i] = s.pts[i] + dx; p[i + 1] = s.pts[i + 1] + dy; }
 		const n: Stroke = { id: 0, color: s.color, size: s.size, pts: p, bbox: computeBBox(p, s.size), stamp: 0 };
 		if (s.link) n.link = s.link;
+		if (s.smooth) n.smooth = true;
 		return n;
 	});
 }
@@ -548,12 +630,12 @@ export function unionBBox(strokes: Iterable<Stroke>): Rect | null {
 }
 
 /**
- * The data block (version 2): one chunk per line (renames work line by line). `bounds` (content extent)
+ * The data block (version 3; 2 had chunks without "r"): one chunk per line (renames work line by line). `bounds` (content extent)
  * lets ink be added to a closed drawing without decoding its strokes.
  */
 export function dataText(camera: { x: number; y: number; z: number }, bounds: Rect | null, lines: string[]): string {
 	const b = bounds ? `,"bounds":${JSON.stringify({ x0: Math.round(bounds.x0), y0: Math.round(bounds.y0), x1: Math.round(bounds.x1), y1: Math.round(bounds.y1) })}` : "";
-	return `{"type":"infinite-paper","version":2,"camera":${JSON.stringify(camera)}${b},"chunks":[\n${lines.join(",\n")}\n]}\n`;
+	return `{"type":"infinite-paper","version":3,"camera":${JSON.stringify(camera)}${b},"chunks":[\n${lines.join(",\n")}\n]}\n`;
 }
 
 /**
