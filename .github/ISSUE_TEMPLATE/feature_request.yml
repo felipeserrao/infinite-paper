@@ -1,0 +1,19 @@
+name: Feature idea
+description: Suggest an improvement
+labels: [idea]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Infinite Paper is simple on purpose: few buttons, two colours, handwriting first. Ideas that make writing smoother, faster or better connected to your notes fit best. Bigger tools (shapes, text boxes, images) are probably out of scope, but tell us why you need them.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The situation, not just the feature. "When I study, I want to..."
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help?

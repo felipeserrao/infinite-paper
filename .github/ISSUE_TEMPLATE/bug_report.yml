@@ -1,0 +1,48 @@
+name: Bug report
+description: Something doesn't work as it should
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead. Screenshots or a screen recording help a lot.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open a drawing
+        2. ...
+  - type: dropdown
+    id: device
+    attributes:
+      label: Device
+      options:
+        - iPad
+        - iPhone
+        - Android tablet
+        - Android phone
+        - Mac
+        - Windows
+        - Linux
+    validations:
+      required: true
+  - type: dropdown
+    id: input
+    attributes:
+      label: Input
+      options:
+        - Pen (Apple Pencil or other stylus)
+        - Finger
+        - Mouse or trackpad
+  - type: input
+    id: versions
+    attributes:
+      label: Obsidian and plugin versions
+      description: Settings → About, and Settings → Community plugins
+      placeholder: Obsidian 1.x.x, Infinite Paper 1.0.1
+    validations:
+      required: true

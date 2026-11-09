@@ -100,6 +100,11 @@ npm run build   # type-check and production build
 
 To release, set the version in `manifest.json`, `package.json` and `versions.json`, then push a tag with the same version. The GitHub workflow builds the plugin and drafts the release.
 
+## Feedback
+
+- **Found a bug or have an idea?** [Open an issue](https://github.com/felipeserrao/infinite-paper/issues/new/choose). Device, input (pen, finger or mouse) and versions help a lot.
+- **Questions, or want to share how you use it?** Use [Discussions](https://github.com/felipeserrao/infinite-paper/discussions).
+
 ## License
 
 [MIT](LICENSE)
