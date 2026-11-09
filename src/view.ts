@@ -55,6 +55,8 @@ export class InkView extends TextFileView {
 	getIcon() { return "pen-tool"; }
 
 	async onOpen() {
+		// EditableFileView.onOpen makes the header title editable (click the name to rename the file)
+		await super.onOpen();
 		this.contentEl.empty();
 		this.contentEl.addClass("infinite-paper-view");
 		this.stage = this.contentEl.createDiv({ cls: "ink-stage" });
