@@ -3,6 +3,10 @@
 **An infinite canvas for handwriting in Obsidian.** Handwrite your notes on an endless white page, like a notebook for studying and class notes. Made for **iPad and other tablets, ideally with a pen** such as Apple Pencil.
 
 <p align="center">
+  <img src="https://raw.githubusercontent.com/felipeserrao/infinite-paper/main/docs/notebook.gif" alt="Writing smoothly on a page with 500,000 strokes" width="420">
+</p>
+
+<p align="center">
   <img src="https://raw.githubusercontent.com/felipeserrao/infinite-paper/main/docs/writing.png" alt="Handwritten notes on iPad" width="32%">
   <img src="https://raw.githubusercontent.com/felipeserrao/infinite-paper/main/docs/selection.png" alt="Lasso selection with Link, Move and Copy" width="32%">
   <img src="https://raw.githubusercontent.com/felipeserrao/infinite-paper/main/docs/link-box.png" alt="A link box pointing to another note" width="32%">
@@ -23,6 +27,9 @@
 - **Lasso and box select.** Drag what you selected to move it. Change its color or pen size, make it smaller or bigger, delete it, or link it to a note.
 - **Link boxes.** Put a link box on the page that opens any note. Each link is also written into the drawing's note as a normal `[[link]]`, so the backlinks panel, the graph and rename-updates all work as they do for any other note. A links panel lists every link on the page. Unlink a box to keep the handwriting inside it.
 - **Move or copy handwriting to another note, leaving a link behind.** Select part of a page and move it to a new or existing drawing. Where it was, you get a link box pointing to its new home, and the new note lists the original in its backlinks. Long notes can grow into a web of connected pages without losing their thread.
+
+  <img src="https://raw.githubusercontent.com/felipeserrao/infinite-paper/main/docs/links.gif" alt="Moving handwriting to another page leaves a link behind; copying and linking handwriting" width="420">
+
 - **Page lines.** One tap adds a vertical line to split the endless page into columns. You set the line's length.
 - **Zoom chip.** Tap to jump to your preferred zoom and tap again to go back. A padlock freezes the zoom, so pinching only moves the page.
 - **Small files.** Handwriting is saved compressed, losslessly. Optional **Compact ink** makes files about 55–60% smaller again.
