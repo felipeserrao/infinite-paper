@@ -1070,11 +1070,11 @@ export class InkEngine {
 		return out;
 	}
 
-	/** copy the selection onto this page, a little down-right (one undo step); the copy becomes the selection */
+	/** copy the selection onto this page, just to the right of it, top-aligned (one undo step); the copy becomes the selection */
 	duplicateSelection(): boolean {
-		if (!this.selection.length) return false;
-		const d = 30 / this.cam.z;
-		this.setSelection(this.addFrom(this.selection, d, d));
+		const b = this.selectionBounds();
+		if (!this.selection.length || !b) return false;
+		this.setSelection(this.addFrom(this.selection, b.x1 - b.x0 + 40 / this.cam.z, 0));
 		this.requestFrame();
 		return true;
 	}
