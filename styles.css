@@ -282,3 +282,10 @@ body:not(.is-mobile) .infinite-paper-view .ink-actions { bottom: 36px; }
 .infinite-paper-view .ink-penmode .ink-btn { height: 36px; gap: 6px; padding: 0 10px; font-size: 14px; font-weight: 600; }
 .infinite-paper-view .ink-penmode .ink-btn svg { width: 16px; height: 16px; }
 .infinite-paper-view .ink-penmode .ink-penmode-x { display: flex; opacity: .5; margin-left: 2px; }
+
+/* one-time "Writing with a finger?" notice */
+.ink-hint { display: flex; flex-direction: column; gap: 6px; max-width: 300px; }
+.ink-hint-title { font-weight: var(--font-semibold); }
+.ink-hint-row { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; margin-top: 4px; }
+.ink-hint-row button { font-size: var(--font-ui-small); height: auto; padding: 4px 12px; border-radius: var(--radius-s); }
+.ink-hint-note { font-size: var(--font-ui-smaller); color: var(--text-muted); }
