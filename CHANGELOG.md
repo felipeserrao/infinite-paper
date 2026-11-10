@@ -4,6 +4,8 @@ User-facing changes, newest first. Every change that reaches `main` adds a line 
 
 ## Unreleased (next: 1.2.0)
 
+- **Other styluses.** The eraser end of a pen (Surface Pen, Wacom), or holding its side button (S Pen, Surface), now erases for that stroke and then goes back to the pen.
+- **Writing with a finger or a rubber-tip stylus.** These count as a finger, which moves the page. The first time a finger pans on a device where no pen has ever been used, a short hint offers **Let touch draw**. The hand button's choice (touch draws or not) is now remembered on each device instead of resetting every time you open a drawing.
 - Repository: the README shows two short demos: writing on a page with 500,000 strokes, and moving, copying and linking handwriting.
 - Repository: the README and the plugin's description now explain what it's for: smooth handwriting like tldraw, a whole notebook on one page (tested on iPad with 500,000 strokes), links and moving handwriting between pages, and why a drawing is a regular note.
 
