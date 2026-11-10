@@ -501,10 +501,13 @@ export class InkView extends TextFileView {
 		if (this.app.loadLocalStorage(PEN_SEEN_KEY) === true || this.app.loadLocalStorage(TOUCH_HINT_KEY) === true) return;
 		this.app.saveLocalStorage(TOUCH_HINT_KEY, true);
 		const frag = createFragment((f) => {
-			f.createDiv({ text: "Writing with a finger or a rubber-tip stylus? Only a pen draws for now, so one finger moves the page." });
-			const b = f.createEl("button", { text: "Let touch draw", cls: "mod-cta" });
-			b.addEventListener("click", () => { if (!this.engine.touchDraws) this.toggleTouch(); notice.hide(); });
-			f.createDiv({ cls: "setting-item-description", text: "You can switch this any time with the hand button at the top of the drawing." });
+			const box = f.createDiv({ cls: "ink-hint" });
+			box.createDiv({ cls: "ink-hint-title", text: "Writing with a finger?" });
+			box.createDiv({ text: "Only a pen draws right now, so one finger moves the page. A rubber-tip stylus counts as a finger." });
+			const row = box.createDiv({ cls: "ink-hint-row" });
+			const btn = row.createEl("button", { text: "Let touch draw", cls: "mod-cta" });
+			btn.addEventListener("click", (e) => { e.stopPropagation(); if (!this.engine.touchDraws) this.toggleTouch(); notice.hide(); });
+			row.createSpan({ cls: "ink-hint-note", text: "or later with the hand button at the top" });
 		});
 		const notice = new Notice(frag, 15000);
 	}
