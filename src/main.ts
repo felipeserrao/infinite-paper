@@ -171,6 +171,17 @@ export default class InfinitePaperPlugin extends Plugin {
 		});
 
 		this.addCommand({
+			id: "dev-touch-hint",
+			name: "Dev: show the \"Writing with a finger?\" hint",
+			checkCallback: (checking) => {
+				const v = this.app.workspace.getActiveViewOfType(InkView);
+				if (!this.settings.devMode || !v) return false;
+				if (!checking) v.showTouchHint();
+				return true;
+			},
+		});
+
+		this.addCommand({
 			id: "toggle-perf",
 			name: "Toggle performance overlay",
 			checkCallback: (checking) => {

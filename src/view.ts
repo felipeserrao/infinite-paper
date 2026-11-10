@@ -500,6 +500,11 @@ export class InkView extends TextFileView {
 		if (this.engine.touchDraws) return;
 		if (this.app.loadLocalStorage(PEN_SEEN_KEY) === true || this.app.loadLocalStorage(TOUCH_HINT_KEY) === true) return;
 		this.app.saveLocalStorage(TOUCH_HINT_KEY, true);
+		this.showTouchHint();
+	}
+
+	/** the "Writing with a finger?" notice (also a dev command, to check how it looks) */
+	showTouchHint() {
 		const frag = createFragment((f) => {
 			const box = f.createDiv({ cls: "ink-hint" });
 			box.createDiv({ cls: "ink-hint-title", text: "Writing with a finger?" });
