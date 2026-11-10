@@ -45,6 +45,12 @@ export class InkEngine {
 	/** pen mode is on right now (entered by the pen, left with exitPenMode) */
 	penMode = false;
 	onPenModeChange: (on: boolean) => void = () => {};
+	/** a pointer the browser calls a pen touched the page (the view remembers that this device has a pen) */
+	onPenSeen: () => void = () => {};
+	/** one finger started panning with touch drawing off (the view may hint at "Touch draws" for finger or rubber-tip stylus users) */
+	onFingerPan: () => void = () => {};
+	/** the tool to go back to after a stroke made with the pen's eraser end or side button */
+	private toolBeforeEraser: Tool | null = null;
 
 	onChange: () => void = () => {};
 	/** ink was added, removed or moved (not camera moves) */
@@ -640,9 +646,15 @@ export class InkEngine {
 		if (e.pointerType === "mouse" && e.button !== 0) return;
 		// pen (or mouse left): cancel any finger gesture
 		this.touches.clear(); this.gesture = null;
+		if (e.pointerType === "pen") this.onPenSeen();
 		if (e.pointerType === "pen" && !this.penMode && !this.touchDraws && this.penOnly()) { this.penMode = true; this.onPenModeChange(true); }
 		if (this.drawPointer !== null) return;
 		this.capture(e.pointerId);
+		// eraser end (Surface, Wacom) or side button held (S Pen, Surface barrel): erase for this stroke only
+		if (e.pointerType === "pen" && (e.buttons & (32 | 2)) && this.tool !== "eraser") {
+			this.toolBeforeEraser = this.tool;
+			this.tool = "eraser";
+		}
 		this.startDraw(e, x, y);
 	}
 
@@ -698,6 +710,7 @@ export class InkEngine {
 		if (g.kind === "pan" && g.mode === "unsure") {
 			if (Math.hypot(sx - g.sx, sy - g.sy) <= PAN_START_PX) return;
 			g.mode = "pan";
+			if (!this.touchDraws && !this.panMode) this.onFingerPan();
 		}
 		let z = g.cam.z;
 		if (g.kind === "pinch" && pts.length >= 2 && g.d > 0) {
@@ -741,6 +754,7 @@ export class InkEngine {
 		this.touches.delete(e.pointerId);
 		if (cancelled) this.cancelDraw();
 		else this.endDraw();
+		if (this.toolBeforeEraser) { this.tool = this.toolBeforeEraser; this.toolBeforeEraser = null; }
 	}
 
 	private inPenMode() { return this.penMode && !this.touchDraws && this.penOnly(); }

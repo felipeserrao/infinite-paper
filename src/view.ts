@@ -8,6 +8,9 @@ import { live } from "./settings";
 import { importTldraw, isTldrawMarkdown } from "./tldraw-import";
 import type InfinitePaperPlugin from "./main";
 
+/** per device (Obsidian local storage): touch drawing on, a pen has been used here, the touch hint was shown */
+const TOUCH_DRAWS_KEY = "infinite-paper-touch-draws", PEN_SEEN_KEY = "infinite-paper-pen-seen", TOUCH_HINT_KEY = "infinite-paper-touch-hint-shown";
+
 /** one tap of "Make bigger" (and its inverse for "Make smaller") */
 const SCALE_STEP = 1.25;
 
@@ -82,6 +85,12 @@ export class InkView extends TextFileView {
 		this.addAction("file-text", "Open as markdown (edit links and tags)", () => this.openAsMarkdown());
 		// palm guard lives in the header, next to Save (also in the rail's "…" menu)
 		this.touchAction = this.addAction("hand-metal", "Palm guard on: only the pen draws (tap to let touch draw)", () => this.toggleTouch());
+		// "Touch draws" is remembered per device: a device without a pen keeps it on
+		if (this.app.loadLocalStorage(TOUCH_DRAWS_KEY) === true) this.setTouch(true);
+		this.engine.onPenSeen = () => {
+			if (this.app.loadLocalStorage(PEN_SEEN_KEY) !== true) this.app.saveLocalStorage(PEN_SEEN_KEY, true);
+		};
+		this.engine.onFingerPan = () => this.maybeTouchHint();
 		this.engine.onViewChange = () => this.updateOverlays();
 		// (0.9.4–0.9.8 faded the toolbars while writing; removed in 0.9.9: it flickered on every word)
 		// links open in a new tab
@@ -482,7 +491,26 @@ export class InkView extends TextFileView {
 
 	private touchAction!: HTMLElement;
 	private toggleTouch() {
-		const on = this.engine.touchDraws = !this.engine.touchDraws;
+		this.setTouch(!this.engine.touchDraws);
+		this.app.saveLocalStorage(TOUCH_DRAWS_KEY, this.engine.touchDraws);
+	}
+
+	/** once per device, if no pen has ever touched it: a finger dragging the page may be someone trying to write */
+	private maybeTouchHint() {
+		if (this.engine.touchDraws) return;
+		if (this.app.loadLocalStorage(PEN_SEEN_KEY) === true || this.app.loadLocalStorage(TOUCH_HINT_KEY) === true) return;
+		this.app.saveLocalStorage(TOUCH_HINT_KEY, true);
+		const frag = createFragment((f) => {
+			f.createDiv({ text: "Writing with a finger or a rubber-tip stylus? Only a pen draws for now, so one finger moves the page." });
+			const b = f.createEl("button", { text: "Let touch draw", cls: "mod-cta" });
+			b.addEventListener("click", () => { if (!this.engine.touchDraws) this.toggleTouch(); notice.hide(); });
+			f.createDiv({ cls: "setting-item-description", text: "You can switch this any time with the hand button at the top of the drawing." });
+		});
+		const notice = new Notice(frag, 15000);
+	}
+
+	private setTouch(on: boolean) {
+		this.engine.touchDraws = on;
 		if (on) this.engine.exitPenMode();
 		this.touchAction.toggleClass("is-active", on);
 		setIcon(this.touchAction, on ? "pointer" : "hand-metal");
