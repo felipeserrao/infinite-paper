@@ -4,6 +4,8 @@ User-facing changes, newest first. Every change that reaches `main` adds a line 
 
 ## Unreleased (next: 1.2.0)
 
+- Repository: the README and the plugin's description now explain what it's for: smooth handwriting like tldraw, a whole notebook on one page (tested on iPad with 500,000 strokes), links and moving handwriting between pages, and why a drawing is a regular note.
+
 ## 1.1.0 (2026-11-10)
 
 - **Rename a drawing from its title.** Clicking (or tapping) the drawing's name in the header now lets you rename the file, as it does for notes.
