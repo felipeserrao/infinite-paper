@@ -2,7 +2,9 @@
 
 User-facing changes, newest first. Every change that reaches `main` adds a line under **Unreleased** (what changed and why, in a user's words). The session that publishes a release renames **Unreleased** to the version and uses it as the release notes. Older releases: see [GitHub releases](https://github.com/felipeserrao/infinite-paper/releases).
 
-## Unreleased (next: 1.1.0)
+## Unreleased (next: 1.2.0)
+
+## 1.1.0 (2026-11-10)
 
 - **Rename a drawing from its title.** Clicking (or tapping) the drawing's name in the header now lets you rename the file, as it does for notes.
 - **Menus close when you tap the page.** With a menu open (for example the header's ⋯ menu), a tap or click on the drawing now closes it, instead of the menu staying open until you tap its button again. That tap draws nothing.
