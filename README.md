@@ -11,7 +11,7 @@
 ## Why
 
 - **Smooth handwriting, like tldraw.** The goal was handwriting that feels as smooth as the [tldraw plugin](https://github.com/tldraw/obsidian-plugin), which is smoother than whiteboard plugins such as Excalidraw.
-- **Write a whole notebook on one page.** The tldraw plugin stops at 4,000 strokes per page. Infinite Paper was tested on an iPad with 500,000 and still pans and zooms smoothly. As a rough guide, a full handwritten page is about 1,000 strokes (25 lines × 8 words × about 4 strokes per word), so that's about 4 pages against about 500.
+- **Write a whole notebook on one page.** The tldraw plugin stops at 4,000 strokes per page. Infinite Paper was tested on an iPad with 500,000 and still pans and zooms smoothly. As a rough guide, a full handwritten page is about 1,400 strokes (25 lines × 8 words × about 7 strokes per word, measured on real handwriting), so that's about 3 pages against about 350.
 - **Links between notes, and moving your handwriting between pages.** Link boxes on the page are real Obsidian links, so backlinks, the graph and renames just work. Select some handwriting and move or copy it to another drawing; a link to its new place stays behind.
 - **A drawing is a note, not a new file type.** Some handwriting plugins keep ink in their own file format, outside your notes. Infinite Paper saves each drawing as a regular `.md` note, so it behaves like any other note: you can add tags, properties and links at the top, find it by name, and see it in backlinks and the graph. If you ever turn the plugin off, your drawings are still ordinary notes. Your header text and links stay readable, and nothing is locked in a separate format.
 - **Simple on purpose.** Two colors, four pen sizes and only a few buttons, so the screen stays out of the way while you write. There are no shapes, text boxes or sticky notes; for those, use tldraw or Excalidraw.
@@ -89,7 +89,7 @@ With the plugin turned off, your drawings are still ordinary notes. The text and
 - **Tablet first.** It works with a mouse or trackpad, but it is designed and tested for a pen on a tablet.
 - **No export to PNG or SVG yet.**
 - **Drawings can't be embedded in other notes as previews yet.**
-- **File size on Obsidian Sync Standard** (5 MB per file): about 50,000 strokes (about 50 pages) per drawing, or about 230,000 with Compact ink. Sync Plus allows 200 MB per file.
+- **File size on Obsidian Sync Standard** (5 MB per file): about 50,000 strokes (about 35 pages) per drawing, or about 230,000 (about 160 pages) with Compact ink. Sync Plus allows 200 MB per file.
 
 ## Installation
 
