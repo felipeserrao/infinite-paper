@@ -741,7 +741,7 @@ export class InkView extends TextFileView {
 	/**
 	 * Selection bar, above the selection:
 	 * - a link box (pencil tap): Open · Change · Delete
-	 * - ink (lasso): Link · Move… · Copy… · Delete
+	 * - ink (lasso): Link · Move… · Duplicate · Copy to… · Delete
 	 */
 	private renderSelBar() {
 		const bar = this.selBar;
@@ -770,7 +770,8 @@ export class InkView extends TextFileView {
 				}, { x: r.left, y: r.bottom + 4 });
 			};
 			btn("folder-input", "Move…", "Move the selection to another drawing", transfer("move"));
-			btn("copy", "Copy…", "Copy the selection to another drawing", transfer("copy"));
+			btn("copy-plus", "Duplicate", "Duplicate the selection on this page", () => this.engine.duplicateSelection());
+			btn("copy", "Copy to…", "Copy the selection to another drawing", transfer("copy"));
 		}
 		if (box || this.engine.selection.length) {
 			// tap repeatedly to step the size: as if the ink had been written at another zoom

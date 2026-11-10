@@ -1070,6 +1070,15 @@ export class InkEngine {
 		return out;
 	}
 
+	/** copy the selection onto this page, a little down-right (one undo step); the copy becomes the selection */
+	duplicateSelection(): boolean {
+		if (!this.selection.length) return false;
+		const d = 30 / this.cam.z;
+		this.setSelection(this.addFrom(this.selection, d, d));
+		this.requestFrame();
+		return true;
+	}
+
 	/** compact ink for every stroke not compact yet (one undo step); returns how many were changed */
 	compactAll(): number {
 		const old = [...this.store.strokes.values()].filter((s) => !s.link && !s.smooth).sort((a, b) => a.id - b.id);
