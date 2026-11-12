@@ -122,6 +122,15 @@ export default class InfinitePaperPlugin extends Plugin {
 		});
 		this.addCommand({ id: "new-drawing", name: "New drawing", callback: () => this.newDrawing() });
 		this.addCommand({
+			id: "toggle-move-guides",
+			name: "Turn alignment guides when moving on/off",
+			callback: async () => {
+				this.settings.moveGuides = !this.settings.moveGuides;
+				await this.saveSettings();
+				new Notice(`Alignment guides when moving: ${this.settings.moveGuides ? "on" : "off"}`);
+			},
+		});
+		this.addCommand({
 			id: "compact-all-ink",
 			name: "Compact all ink in this drawing",
 			checkCallback: (checking) => {
