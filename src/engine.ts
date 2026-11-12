@@ -1,4 +1,4 @@
-import { Store, Stroke, Rect, LinkInfo, LINK_BOX, LINK_BORDER, compactPoints, computeBBox, centerlinePath, hitStroke, outlineToPath, paintStroke, pointInPoly, strokeOutline, tailLag } from "./store";
+import { Store, Stroke, Rect, LinkInfo, LINK_BOX, LINK_BORDER, compactPoints, computeBBox, centerlinePath, getPath, hitStroke, outlineToPath, paintStroke, pointInPoly, strokeOutline, tailLag } from "./store";
 import { live } from "./settings";
 import { exp } from "./exp";
 import { TileCache, Tile, TILE, MIN_LEVEL, MAX_LEVEL, tileWorldSize } from "./tiles";
@@ -21,6 +21,10 @@ const PINCH_ZOOM_PX = 24, PINCH_PAN_PX = 16, PAN_TO_ZOOM_PX = 64;
 /** palm guards for finger panning: a one-finger pan starts after this many screen px; touches this soon after the pen are ignored */
 const PAN_START_PX = 10, PALM_COOLDOWN_MS = 500;
 const FRAME_BUDGET_MS = 7;
+/** eraser reach, in screen px (the ring around the eraser icon shows it) */
+const ERASER_PX = 8;
+const TRAIL_POINTS = 24;
+const HINT_COLOR = "#3b82f6", GUIDE_COLOR = "#3b82f6";
 
 class Ring {
 	private a: number[] = [];
@@ -101,9 +105,18 @@ export class InkEngine {
 
 	// eraser
 	private erased: Stroke[] = [];
+	/** eraser icon position (CSS px) while erasing or hovering, null = hidden */
+	private eraserAt: [number, number] | null = null;
+	/** recent eraser positions (CSS px, x,y pairs): the grey trail behind it */
+	private eraserTrail: number[] = [];
 
 	// lasso / selection
 	private lassoPts: number[] = [];
+	/** lasso being drawn: the strokes it would pick if the pen lifted now (painted blue) */
+	private hint: Stroke[] = [];
+	private hintAt = 0;
+	/** how long the last hint took (ms): big pages check less often so the lasso stays smooth */
+	private hintMs = 0;
 	/** lasso tool in box mode: drag a rectangle instead of drawing a free loop */
 	boxSelect = false;
 	/** zoom frozen: pinch and ctrl-wheel only pan; buttons (setZoom) still work */
@@ -477,7 +490,19 @@ export class InkEngine {
 		const ctx = this.overlayCtx;
 		ctx.setTransform(1, 0, 0, 1, 0, 0);
 		ctx.clearRect(0, 0, this.overlay.width, this.overlay.height);
+		if (this.hint.length) {
+			this.setWorldTransform(ctx);
+			for (const s of this.hint) this.paintTinted(ctx, s, HINT_COLOR);
+		}
+		if (this.erased.length) {
+			// strokes the eraser has touched stay faintly visible until the pen lifts
+			this.setWorldTransform(ctx);
+			ctx.globalAlpha = 0.25;
+			for (const s of this.erased) paintStroke(ctx, s);
+			ctx.globalAlpha = 1;
+		}
 		if (!this.selection.length || !this.selBox) return;
+		if (this.moving && live.settings.moveGuides) this.drawGuides();
 		const dx = this.moving?.dx ?? 0, dy = this.moving?.dy ?? 0;
 		if (this.moving) {
 			this.setWorldTransform(ctx, dx, dy);
@@ -500,6 +525,55 @@ export class InkEngine {
 		ctx.setLineDash([6 / this.cam.z, 4 / this.cam.z]);
 		ctx.strokeStyle = "#3b82f6";
 		ctx.strokeRect(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0);
+		ctx.setLineDash([]);
+	}
+
+	/** a stroke painted in one colour (lasso hint) */
+	private paintTinted(ctx: CanvasRenderingContext2D, s: Stroke, color: string) {
+		if (s.link) {
+			const r = rectOf(s);
+			ctx.lineWidth = 3 / this.cam.z; ctx.strokeStyle = color;
+			ctx.strokeRect(r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0);
+		} else if (exp.centerline) {
+			if (!s.cpath) s.cpath = centerlinePath(s.pts, s.size, true, s.smooth);
+			ctx.strokeStyle = color; ctx.lineWidth = s.size; ctx.lineCap = "round"; ctx.lineJoin = "round";
+			ctx.stroke(s.cpath);
+		} else {
+			ctx.fillStyle = color;
+			ctx.fill(getPath(s));
+		}
+	}
+
+	/**
+	 * Alignment guides while dragging a selection (setting "Alignment guides when moving"):
+	 * moving up/down shows horizontal lines through its top and bottom edges, moving sideways vertical
+	 * lines through its left and right edges, across the whole view, to line it up with other writing.
+	 */
+	private drawGuides() {
+		const m = this.moving!, b = this.selBox!, z = this.cam.z;
+		const ax = Math.abs(m.dx * z), ay = Math.abs(m.dy * z);
+		if (Math.max(ax, ay) < 4) return;
+		const ctx = this.overlayCtx;
+		ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+		ctx.lineWidth = 1;
+		ctx.setLineDash([6, 5]);
+		ctx.strokeStyle = GUIDE_COLOR;
+		const line = (x0: number, y0: number, x1: number, y1: number) => {
+			// half-pixel offset: a crisp 1 px line
+			ctx.beginPath(); ctx.moveTo(Math.round(x0) + 0.5, Math.round(y0) + 0.5); ctx.lineTo(Math.round(x1) + 0.5, Math.round(y1) + 0.5); ctx.stroke();
+		};
+		const sx = (x: number) => (x + m.dx) * z + this.cam.x, sy = (y: number) => (y + m.dy) * z + this.cam.y;
+		const showH = ay >= ax / 2, showV = ax >= ay / 2;
+		// the main direction is solid-ish; the other only shows (fainter) on a diagonal drag
+		if (showH) {
+			ctx.globalAlpha = ay >= ax ? 0.9 : 0.45;
+			line(0, sy(b.y0), this.cssW, sy(b.y0)); line(0, sy(b.y1), this.cssW, sy(b.y1));
+		}
+		if (showV) {
+			ctx.globalAlpha = ax > ay ? 0.9 : 0.45;
+			line(sx(b.x0), 0, sx(b.x0), this.cssH); line(sx(b.x1), 0, sx(b.x1), this.cssH);
+		}
+		ctx.globalAlpha = 1;
 		ctx.setLineDash([]);
 	}
 
@@ -564,6 +638,49 @@ export class InkEngine {
 		if (pts.length >= 4) this.perf.tail.push(tailLag(pts, this.size) * this.cam.z);
 	}
 
+	/** the eraser icon at the pen tip, its reach as a ring, and a short grey trail (live layer, screen px) */
+	private drawEraser() {
+		const ctx = this.liveCtx;
+		this.clearLive();
+		this.live.style.cursor = this.eraserAt ? "none" : "";
+		if (!this.eraserAt) return;
+		ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+		const t = this.eraserTrail;
+		if (t.length >= 4) {
+			ctx.lineCap = "round"; ctx.lineJoin = "round";
+			ctx.strokeStyle = "rgba(128, 128, 128, 0.35)";
+			ctx.lineWidth = 6;
+			ctx.beginPath(); ctx.moveTo(t[0], t[1]);
+			for (let i = 2; i < t.length; i += 2) ctx.lineTo(t[i], t[i + 1]);
+			ctx.stroke();
+		}
+		const [x, y] = this.eraserAt;
+		ctx.beginPath(); ctx.arc(x, y, ERASER_PX, 0, Math.PI * 2);
+		ctx.fillStyle = "rgba(255, 255, 255, 0.5)"; ctx.fill();
+		ctx.lineWidth = 1.5; ctx.strokeStyle = "#6b7280"; ctx.stroke();
+		// a little eraser, tilted, up and to the right of the tip so the pen's own body doesn't hide it
+		ctx.save();
+		ctx.translate(x + ERASER_PX + 3, y - ERASER_PX - 3);
+		ctx.rotate(-Math.PI / 4);
+		const w = 24, h = 12;
+		const rr = (x0: number, w0: number) => {
+			ctx.beginPath();
+			if (typeof ctx.roundRect === "function") ctx.roundRect(x0, -h / 2, w0, h, 2.5); else ctx.rect(x0, -h / 2, w0, h);
+		};
+		rr(0, w); ctx.fillStyle = "#ffffff"; ctx.fill();
+		rr(0, w * 0.4); ctx.fillStyle = "#f472b6"; ctx.fill();
+		rr(0, w); ctx.lineWidth = 1.5; ctx.strokeStyle = "#374151"; ctx.stroke();
+		ctx.beginPath(); ctx.moveTo(w * 0.4, -h / 2); ctx.lineTo(w * 0.4, h / 2); ctx.stroke();
+		ctx.restore();
+	}
+
+	/** the view switched tools: hide the eraser icon until the pointer moves again */
+	toolChanged() {
+		if (!this.eraserAt || this.drawPointer !== null) return;
+		this.eraserAt = null; this.eraserTrail = [];
+		this.drawEraser();
+	}
+
 	private drawLasso() {
 		const ctx = this.liveCtx;
 		this.clearLive();
@@ -587,6 +704,7 @@ export class InkEngine {
 		el.addEventListener("pointermove", (e) => this.onMove(e));
 		el.addEventListener("pointerup", (e) => this.onUp(e, false));
 		el.addEventListener("pointercancel", (e) => this.onUp(e, true));
+		el.addEventListener("pointerleave", () => { if (this.drawPointer === null && this.eraserAt) { this.eraserAt = null; this.drawEraser(); } });
 		el.addEventListener("wheel", (e) => this.onWheel(e), { passive: false });
 		const stop = (e: TouchEvent) => { e.preventDefault(); e.stopPropagation(); };
 		el.addEventListener("touchstart", stop, { passive: false });
@@ -689,6 +807,11 @@ export class InkEngine {
 		}
 		if (e.pointerId !== this.drawPointer) {
 			if (e.pointerType === "mouse" && this.drawPointer === null) this.lastPointer = this.local(e); // hover
+			// mouse, or a pencil that reports hover (iPad M2 and later): the eraser icon follows it
+			if (this.drawPointer === null && e.pointerType !== "touch" && this.tool === "eraser" && !this.panMode) {
+				this.eraserAt = this.local(e); this.eraserTrail = [];
+				this.drawEraser();
+			}
 			return;
 		}
 		const evs = !exp.noCoalesced && e.getCoalescedEvents ? e.getCoalescedEvents() : [];
@@ -825,7 +948,9 @@ export class InkEngine {
 			if (!box) this.drawLiveStroke();
 		} else if (this.tool === "eraser") {
 			this.erased = [];
+			this.eraserAt = [x, y]; this.eraserTrail = [x, y];
 			this.eraseAt(wx, wy);
+			this.drawEraser();
 		} else {
 			this.lassoPts = [wx, wy];
 		}
@@ -854,6 +979,9 @@ export class InkEngine {
 				else this.mergeNext = true;
 			} else if (this.livePts[n - 2] !== wx || this.livePts[n - 1] !== wy) this.livePts.push(wx, wy);
 		} else if (this.tool === "eraser") {
+			this.eraserAt = [x, y];
+			this.eraserTrail.push(x, y);
+			if (this.eraserTrail.length > 2 * TRAIL_POINTS) this.eraserTrail.splice(0, this.eraserTrail.length - 2 * TRAIL_POINTS);
 			this.eraseAt(wx, wy);
 		} else if (this.boxSelect) {
 			const sx = this.lassoPts[0], sy = this.lassoPts[1];
@@ -869,7 +997,8 @@ export class InkEngine {
 	private drawMoveEnd() {
 		if (this.moving || this.resizing) this.drawOverlay();
 		else if (this.tool === "pen") { if (!this.penTap) this.scheduleLive(); }
-		else if (this.tool === "lasso") this.drawLasso();
+		else if (this.tool === "lasso") { this.drawLasso(); this.updateHint(); }
+		else if (this.tool === "eraser") this.drawEraser();
 	}
 
 	private cancelDraw() {
@@ -878,11 +1007,13 @@ export class InkEngine {
 		if (this.tool === "eraser" || this.moving || this.resizing) this.endDraw();
 		this.drawPointer = null; this.drawPointerType = "";
 		this.livePts = []; this.lassoPts = [];
+		this.clearHint();
+		this.eraserTrail = []; this.eraserAt = null;
 		this.clearLive();
 	}
 
 	private endDraw() {
-		const tool = this.tool;
+		const tool = this.tool, ptype = this.drawPointerType;
 		this.onWriting(false);
 		this.drawPointer = null; this.drawPointerType = "";
 		if (this.resizing) { this.endResize(); return; }
@@ -916,6 +1047,11 @@ export class InkEngine {
 		} else if (tool === "eraser") {
 			if (this.erased.length) this.push({ type: "remove", strokes: this.erased });
 			this.erased = [];
+			this.drawOverlay();
+			// the icon stays only for a hovering mouse; a pen that hovers brings it back on its own
+			this.eraserTrail = [];
+			if (ptype !== "mouse") this.eraserAt = null;
+			this.drawEraser();
 		} else {
 			this.finishLasso();
 			this.clearLive();
@@ -955,30 +1091,68 @@ export class InkEngine {
 	}
 
 	private eraseAt(wx: number, wy: number) {
-		const rad = 8 / this.cam.z;
+		const rad = ERASER_PX / this.cam.z;
 		const cands = this.store.query({ x0: wx - rad, y0: wy - rad, x1: wx + rad, y1: wy + rad });
 		const hit = cands.filter((s) => hitStroke(s, wx, wy, rad));
 		if (!hit.length) return;
 		this.erased.push(...hit);
 		this.removeStrokes(hit);
+		this.drawOverlay();
 	}
 
-	private finishLasso() {
-		const poly = this.lassoPts;
-		this.lassoPts = [];
-		if (!poly.length) return;
+	private polyBounds(poly: number[]): Rect {
 		let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
 		for (let i = 0; i < poly.length; i += 2) {
 			x0 = Math.min(x0, poly[i]); x1 = Math.max(x1, poly[i]); y0 = Math.min(y0, poly[i + 1]); y1 = Math.max(y1, poly[i + 1]);
 		}
+		return { x0, y0, x1, y1 };
+	}
+
+	/** a lasso this small is a tap (picks the link box under it), not a loop */
+	private isLassoTap(poly: number[], r: Rect) { return poly.length < 6 || Math.max(r.x1 - r.x0, r.y1 - r.y0) * this.cam.z < 6; }
+
+	/** while the lasso is drawn: show which strokes it would pick (tldraw shows the same), checked a few times a second */
+	private updateHint() {
+		const now = performance.now();
+		if (now - this.hintAt < Math.max(40, this.hintMs * 4)) return;
+		this.hintAt = now;
+		let poly = this.lassoPts;
+		const r = this.polyBounds(poly);
+		let next: Stroke[] = [];
+		if (!this.isLassoTap(poly, r)) {
+			// a coarser loop (at most ~80 corners) is plenty for a preview; lifting the pen uses the full one
+			const k = Math.max(1, Math.ceil(poly.length / 160));
+			if (k > 1) { const p: number[] = []; for (let i = 0; i < poly.length; i += 2 * k) p.push(poly[i], poly[i + 1]); poly = p; }
+			next = this.strokesInPoly(poly, r);
+		}
+		this.hintMs = performance.now() - now;
+		if (next.length === this.hint.length && next.every((s, i) => s === this.hint[i])) return;
+		this.hint = next;
+		this.drawOverlay();
+	}
+
+	private clearHint() { if (this.hint.length) { this.hint = []; this.drawOverlay(); } }
+
+	private finishLasso() {
+		const poly = this.lassoPts;
+		this.lassoPts = [];
+		this.hint = [];
+		if (!poly.length) { this.drawOverlay(); return; }
+		const r = this.polyBounds(poly);
 		// a tap with the lasso: pick the link box under it
-		if (poly.length < 6 || Math.max(x1 - x0, y1 - y0) * this.cam.z < 6) {
+		if (this.isLassoTap(poly, r)) {
+			this.drawOverlay();
 			const l = this.linkAtWorld(poly[0], poly[1]);
 			if (l) this.selectLink(l);
 			return;
 		}
+		this.setSelection(this.strokesInPoly(poly, r));
+	}
+
+	/** strokes inside a lasso: link boxes by their centre, ink when at least half its points are in */
+	private strokesInPoly(poly: number[], r: Rect): Stroke[] {
 		const sel: Stroke[] = [];
-		for (const s of this.store.query({ x0, y0, x1, y1 })) {
+		for (const s of this.store.query(r)) {
 			if (s.link) {
 				if (pointInPoly((s.bbox.x0 + s.bbox.x1) / 2, (s.bbox.y0 + s.bbox.y1) / 2, poly)) sel.push(s);
 				continue;
@@ -988,7 +1162,7 @@ export class InkEngine {
 			for (let i = 0; i < s.pts.length; i += step) { total++; if (pointInPoly(s.pts[i], s.pts[i + 1], poly)) inside++; }
 			if (inside / total >= 0.5) sel.push(s);
 		}
-		this.setSelection(sel);
+		return sel;
 	}
 
 	private setSelection(sel: Stroke[]) {

@@ -530,6 +530,7 @@ export class InkView extends TextFileView {
 		this.engine.tool = t;
 		if (t !== "lasso") this.engine.clearSelection();
 		if (t === "pen" || t === "eraser") this.penMode = t;
+		this.engine.toolChanged();
 		this.renderSplits();
 	}
 

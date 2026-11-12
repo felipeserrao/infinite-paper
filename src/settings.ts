@@ -33,6 +33,8 @@ export interface InkSettings {
 	compactInk: boolean;
 	/** once the pen touches the page, one finger stops moving it (tldraw's pen mode); two fingers still pan and zoom */
 	penMode: boolean;
+	/** dashed guide lines while dragging a selection: horizontal when moving up/down, vertical when moving sideways */
+	moveGuides: boolean;
 }
 
 export const DEFAULT_SETTINGS: InkSettings = {
@@ -48,6 +50,7 @@ export const DEFAULT_SETTINGS: InkSettings = {
 	linkLineTemplate: "- {{link}}",
 	compactInk: false,
 	penMode: false,
+	moveGuides: false,
 };
 
 /** the plugin's current settings, for code (like the view) that has no handle on the plugin */
@@ -155,6 +158,12 @@ export class InkSettingTab extends PluginSettingTab {
 			.setName("Pen mode")
 			.setDesc("Once the pen touches the page, one finger stops moving it, so a resting palm can't scroll the page. Pan and zoom with two fingers. Tap \"Pen mode ×\" at the top of the drawing to pan with one finger again, until you next use the pen. Off: one finger pans, but only after it really moves, and not right after the pen lifts.")
 			.addToggle((t) => t.setValue(s.penMode).onChange(async (v) => { s.penMode = v; await save(); }));
+
+		new Setting(el).setName("Selection").setHeading();
+		new Setting(el)
+			.setName("Alignment guides when moving")
+			.setDesc("While you drag selected ink, dashed lines run across the page from its edges: horizontal ones when you move it up or down, vertical ones when you move it sideways, to line it up with the rest of your writing.")
+			.addToggle((t) => t.setValue(s.moveGuides).onChange(async (v) => { s.moveGuides = v; await save(); }));
 
 		new Setting(el).setName("File size").setHeading();
 		new Setting(el)
