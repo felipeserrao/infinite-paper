@@ -24,6 +24,8 @@ const FRAME_BUDGET_MS = 7;
 /** eraser reach, in screen px (the ring around the eraser icon shows it) */
 const ERASER_PX = 8;
 const TRAIL_POINTS = 24;
+/** above this many selected strokes, the selection is shown by its box only */
+const MAX_TINTED = 4000;
 const HINT_COLOR = "#3b82f6", GUIDE_COLOR = "#3b82f6";
 
 class Ring {
@@ -126,6 +128,8 @@ export class InkEngine {
 	selection: Stroke[] = [];
 	private selBox: Rect | null = null;
 	private moving: null | { sx: number; sy: number; dx: number; dy: number } = null;
+	/** guides while moving: which way the selection is going lately (screen px, smoothed), and the last clear direction */
+	private moveVel = { x: 0, y: 0, lx: 0, ly: 0, dir: null as null | "h" | "v" };
 	/** dragging a selected link box's corner handle: (ax, ay) is the fixed top-left corner */
 	private resizing: null | { box: Stroke; ax: number; ay: number; x: number; y: number; ghost: Stroke } = null;
 
@@ -504,9 +508,11 @@ export class InkEngine {
 		if (!this.selection.length || !this.selBox) return;
 		if (this.moving && live.settings.moveGuides) this.drawGuides();
 		const dx = this.moving?.dx ?? 0, dy = this.moving?.dy ?? 0;
-		if (this.moving) {
+		// selected ink stays blue (tldraw keeps it marked too); a huge selection only gets its box, to keep panning smooth
+		if (this.moving || this.selection.length <= MAX_TINTED) {
 			this.setWorldTransform(ctx, dx, dy);
-			for (const s of this.selection) paintStroke(ctx, s);
+			if (this.selection.length <= MAX_TINTED) for (const s of this.selection) this.paintTinted(ctx, s, HINT_COLOR);
+			else for (const s of this.selection) paintStroke(ctx, s);
 		}
 		if (this.resizing) { this.setWorldTransform(ctx); paintStroke(ctx, this.resizing.ghost); }
 		const lb = this.selectedLinkBox();
@@ -548,30 +554,27 @@ export class InkEngine {
 	 * Alignment guides while dragging a selection (setting "Alignment guides when moving"):
 	 * moving up/down shows horizontal lines through its top and bottom edges, moving sideways vertical
 	 * lines through its left and right edges, across the whole view, to line it up with other writing.
+	 * The direction follows the pen's recent movement and holds while it pauses.
 	 */
 	private drawGuides() {
-		const m = this.moving!, b = this.selBox!, z = this.cam.z;
-		const ax = Math.abs(m.dx * z), ay = Math.abs(m.dy * z);
-		if (Math.max(ax, ay) < 4) return;
+		const m = this.moving!, b = this.selBox!, z = this.cam.z, dir = this.moveVel.dir;
+		if (!dir) return;
 		const ctx = this.overlayCtx;
 		ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
 		ctx.lineWidth = 1;
 		ctx.setLineDash([6, 5]);
 		ctx.strokeStyle = GUIDE_COLOR;
+		ctx.globalAlpha = 0.9;
 		const line = (x0: number, y0: number, x1: number, y1: number) => {
 			// half-pixel offset: a crisp 1 px line
 			ctx.beginPath(); ctx.moveTo(Math.round(x0) + 0.5, Math.round(y0) + 0.5); ctx.lineTo(Math.round(x1) + 0.5, Math.round(y1) + 0.5); ctx.stroke();
 		};
-		const sx = (x: number) => (x + m.dx) * z + this.cam.x, sy = (y: number) => (y + m.dy) * z + this.cam.y;
-		const showH = ay >= ax / 2, showV = ax >= ay / 2;
-		// the main direction is solid-ish; the other only shows (fainter) on a diagonal drag
-		if (showH) {
-			ctx.globalAlpha = ay >= ax ? 0.9 : 0.45;
-			line(0, sy(b.y0), this.cssW, sy(b.y0)); line(0, sy(b.y1), this.cssW, sy(b.y1));
-		}
-		if (showV) {
-			ctx.globalAlpha = ax > ay ? 0.9 : 0.45;
-			line(sx(b.x0), 0, sx(b.x0), this.cssH); line(sx(b.x1), 0, sx(b.x1), this.cssH);
+		if (dir === "h") {
+			const y0 = (b.y0 + m.dy) * z + this.cam.y, y1 = (b.y1 + m.dy) * z + this.cam.y;
+			line(0, y0, this.cssW, y0); line(0, y1, this.cssW, y1);
+		} else {
+			const x0 = (b.x0 + m.dx) * z + this.cam.x, x1 = (b.x1 + m.dx) * z + this.cam.x;
+			line(x0, 0, x0, this.cssH); line(x1, 0, x1, this.cssH);
 		}
 		ctx.globalAlpha = 1;
 		ctx.setLineDash([]);
@@ -638,7 +641,7 @@ export class InkEngine {
 		if (pts.length >= 4) this.perf.tail.push(tailLag(pts, this.size) * this.cam.z);
 	}
 
-	/** the eraser icon at the pen tip, its reach as a ring, and a short grey trail (live layer, screen px) */
+	/** the eraser: a circle at the pen tip showing its reach, and a short grey trail (tldraw's look; live layer, screen px) */
 	private drawEraser() {
 		const ctx = this.liveCtx;
 		this.clearLive();
@@ -658,20 +661,6 @@ export class InkEngine {
 		ctx.beginPath(); ctx.arc(x, y, ERASER_PX, 0, Math.PI * 2);
 		ctx.fillStyle = "rgba(255, 255, 255, 0.5)"; ctx.fill();
 		ctx.lineWidth = 1.5; ctx.strokeStyle = "#6b7280"; ctx.stroke();
-		// a little eraser, tilted, up and to the right of the tip so the pen's own body doesn't hide it
-		ctx.save();
-		ctx.translate(x + ERASER_PX + 3, y - ERASER_PX - 3);
-		ctx.rotate(-Math.PI / 4);
-		const w = 24, h = 12;
-		const rr = (x0: number, w0: number) => {
-			ctx.beginPath();
-			if (typeof ctx.roundRect === "function") ctx.roundRect(x0, -h / 2, w0, h, 2.5); else ctx.rect(x0, -h / 2, w0, h);
-		};
-		rr(0, w); ctx.fillStyle = "#ffffff"; ctx.fill();
-		rr(0, w * 0.4); ctx.fillStyle = "#f472b6"; ctx.fill();
-		rr(0, w); ctx.lineWidth = 1.5; ctx.strokeStyle = "#374151"; ctx.stroke();
-		ctx.beginPath(); ctx.moveTo(w * 0.4, -h / 2); ctx.lineTo(w * 0.4, h / 2); ctx.stroke();
-		ctx.restore();
 	}
 
 	/** the view switched tools: hide the eraser icon until the pointer moves again */
@@ -934,7 +923,7 @@ export class InkEngine {
 			const box = this.selectedLinkBox();
 			if (box && this.onHandle(box, x, y)) { this.beginResize(box); return; }
 			const b = this.selBox;
-			if (wx >= b.x0 && wx <= b.x1 && wy >= b.y0 && wy <= b.y1) { this.beginMove(wx, wy); return; }
+			if (wx >= b.x0 && wx <= b.x1 && wy >= b.y0 && wy <= b.y1) { this.moveVel = { x: 0, y: 0, lx: x, ly: y, dir: null }; this.beginMove(wx, wy); return; }
 			this.clearSelection();
 		}
 		if (this.tool !== "lasso") this.onWriting(true);
@@ -965,7 +954,18 @@ export class InkEngine {
 			this.selBox = r.ghost.bbox;
 			return;
 		}
-		if (this.moving) { this.moving.dx = wx - this.moving.sx; this.moving.dy = wy - this.moving.sy; return; }
+		if (this.moving) {
+			const v = this.moveVel;
+			v.x = v.x * 0.7 + (x - v.lx) * 0.3; v.y = v.y * 0.7 + (y - v.ly) * 0.3;
+			v.lx = x; v.ly = y;
+			// a direction sticks until the pen clearly goes the other way, so pausing to line up keeps the lines
+			if (Math.hypot(v.x, v.y) > 0.8) {
+				if (Math.abs(v.y) > Math.abs(v.x) * 1.3) v.dir = "h";
+				else if (Math.abs(v.x) > Math.abs(v.y) * 1.3) v.dir = "v";
+			}
+			this.moving.dx = wx - this.moving.sx; this.moving.dy = wy - this.moving.sy;
+			return;
+		}
 		if (this.tool === "pen") {
 			// on a link box: ink starts only once the pen really moves (writing inside a box still works)
 			if (this.penTap && Math.hypot(x - this.penTap.sx, y - this.penTap.sy) > 6) this.penTap = null;
