@@ -4,6 +4,9 @@ User-facing changes, newest first. Every change that reaches `main` adds a line 
 
 ## Unreleased (next: 1.2.0)
 
+- **See what the lasso will pick.** While you draw a lasso or a box, the ink it would select turns blue, and stays blue once selected (as in tldraw). Very large selections (over 4,000 strokes) show only the dashed box, so panning stays smooth.
+- **Eraser shows where it is.** A circle at the pen tip shows how far the eraser reaches, with a short grey trail behind it; erased ink fades and disappears when you lift the pen. The circle also follows a hovering mouse or Apple Pencil.
+- **Alignment guides when moving (optional, Settings → Selection).** While you drag a selection, dashed lines run across the page from its edges: horizontal ones when you move it up or down, vertical ones when you move it sideways, to line it up with your other writing. The lines follow the direction you're moving and stay put while you pause to line up. Also a command: "Turn alignment guides when moving on/off".
 - **Other styluses.** The eraser end of a pen (Surface Pen, Wacom), or holding its side button (S Pen, Surface), now erases for that stroke and then goes back to the pen.
 - **Writing with a finger or a rubber-tip stylus.** These count as a finger, which moves the page. The first time a finger pans on a device where no pen has ever been used, a short hint offers **Let touch draw**. The hand button's choice (touch draws or not) is now remembered on each device instead of resetting every time you open a drawing.
 - Repository: the README shows two short demos: writing on a page with 500,000 strokes, and moving, copying and linking handwriting.
